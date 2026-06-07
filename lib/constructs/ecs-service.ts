@@ -2,9 +2,18 @@ import { Construct } from 'constructs';
 import * as cdk from 'aws-cdk-lib';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as efs from 'aws-cdk-lib/aws-efs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { RemovalPolicy } from 'aws-cdk-lib';
+
+export interface EfsVolumeMount {
+  fileSystem: efs.IFileSystem;
+  accessPoint: efs.IAccessPoint;
+  containerPath: string;
+  volumeName?: string;
+  readOnly?: boolean;
+}
 
 export interface EcsServiceProps {
   vpc: ec2.IVpc;
@@ -20,7 +29,15 @@ export interface EcsServiceProps {
   environment?: Record<string, string>;
   secrets?: Record<string, ecs.Secret>;
   cloudflareTunnelToken?: string;
+  cloudflareTunnelTokenSecret?: ecs.Secret;
   healthCheckPath?: string;
+  efsVolumes?: EfsVolumeMount[];
+  /**
+   * Phase A (default): task runs in PUBLIC subnet with public IP for outbound
+   * to Docker Hub / CF edge / 3rd-party APIs. Inbound still closed by SG.
+   * Set false once NAT (or full VPC endpoint coverage) is in place.
+   */
+  publicNetworking?: boolean;
 }
 
 export class EcsService extends Construct {
@@ -45,10 +62,13 @@ export class EcsService extends Construct {
       environment = {},
       secrets = {},
       cloudflareTunnelToken,
+      cloudflareTunnelTokenSecret,
       healthCheckPath = '/health',
+      efsVolumes = [],
+      publicNetworking = true,
     } = props;
 
-    const hasTunnel = !!cloudflareTunnelToken;
+    const hasTunnel = !!(cloudflareTunnelToken || cloudflareTunnelTokenSecret);
 
     // Security group — no inbound needed, CloudFlare Tunnel connects outbound
     this.securityGroup = new ec2.SecurityGroup(this, 'SG', {
@@ -68,6 +88,27 @@ export class EcsService extends Construct {
     this.taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef', {
       cpu: hasTunnel ? cpu + 256 : cpu,
       memoryLimitMiB: hasTunnel ? memory + 256 : memory,
+    });
+
+    // EFS volumes — register on task def, build mount points for app container
+    const appMountPoints: ecs.MountPoint[] = efsVolumes.map((v, i) => {
+      const volumeName = v.volumeName ?? `efs-${i}`;
+      this.taskDefinition.addVolume({
+        name: volumeName,
+        efsVolumeConfiguration: {
+          fileSystemId: v.fileSystem.fileSystemId,
+          transitEncryption: 'ENABLED',
+          authorizationConfig: {
+            accessPointId: v.accessPoint.accessPointId,
+            iam: 'ENABLED',
+          },
+        },
+      });
+      return {
+        sourceVolume: volumeName,
+        containerPath: v.containerPath,
+        readOnly: v.readOnly ?? false,
+      };
     });
 
     // Main container
@@ -92,14 +133,41 @@ export class EcsService extends Construct {
       },
     });
 
-    // CloudFlare Tunnel sidecar
+    if (appMountPoints.length > 0) {
+      container.addMountPoints(...appMountPoints);
+    }
+
+    // Grant task role EFS client access + allow NFS from service SG.
+    // Ingress is added via SG ID re-import so the rule resource lives in
+    // *this* stack (services), not the EFS owner (data) — avoids cycle.
+    efsVolumes.forEach((v, i) => {
+      v.fileSystem.grantRootAccess(this.taskDefinition.taskRole);
+      v.fileSystem.connections.securityGroups.forEach((sg, j) => {
+        const local = ec2.SecurityGroup.fromSecurityGroupId(
+          this,
+          `EfsSgImport-${i}-${j}`,
+          sg.securityGroupId,
+          { mutable: true },
+        );
+        local.addIngressRule(
+          this.securityGroup,
+          ec2.Port.tcp(2049),
+          `${serviceName} NFS`,
+        );
+      });
+    });
+
+    // CloudFlare Tunnel sidecar — prefer Secrets Manager over plaintext context
     if (hasTunnel) {
       this.taskDefinition.addContainer('cloudflared', {
         image: ecs.ContainerImage.fromRegistry('cloudflare/cloudflared:latest'),
         command: ['tunnel', '--no-autoupdate', 'run'],
-        environment: {
-          TUNNEL_TOKEN: cloudflareTunnelToken,
-        },
+        environment: cloudflareTunnelTokenSecret
+          ? undefined
+          : { TUNNEL_TOKEN: cloudflareTunnelToken! },
+        secrets: cloudflareTunnelTokenSecret
+          ? { TUNNEL_TOKEN: cloudflareTunnelTokenSecret }
+          : undefined,
         logging: ecs.LogDrivers.awsLogs({
           logGroup,
           streamPrefix: 'cloudflared',
@@ -113,9 +181,13 @@ export class EcsService extends Construct {
       cluster,
       taskDefinition: this.taskDefinition,
       desiredCount,
-      assignPublicIp: false,
+      assignPublicIp: publicNetworking,
       securityGroups: [this.securityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      vpcSubnets: {
+        subnetType: publicNetworking
+          ? ec2.SubnetType.PUBLIC
+          : ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
       capacityProviderStrategies: [
         {
           capacityProvider: useFargateSpot ? 'FARGATE_SPOT' : 'FARGATE',

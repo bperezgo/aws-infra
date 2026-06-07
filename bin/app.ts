@@ -8,10 +8,15 @@ import { ServicesStack } from '../lib/stacks/services-stack';
 const app = new cdk.App();
 
 const projectName = app.node.tryGetContext('projectName') || 'bryan-dev';
+const environment = app.node.tryGetContext('env') || 'dev';
 const env: cdk.Environment = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
   region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
 };
+
+cdk.Tags.of(app).add('Project', projectName);
+cdk.Tags.of(app).add('Environment', environment);
+cdk.Tags.of(app).add('ManagedBy', 'cdk');
 
 const network = new NetworkStack(app, `${projectName}-network`, {
   env,
@@ -31,6 +36,10 @@ new ServicesStack(app, `${projectName}-services`, {
   cluster: network.cluster,
   namespace: network.namespace,
   database: data.database,
+  dbSecurityGroup: data.dbSecurityGroup,
   assetsBucket: data.assetsBucket,
   cdnDomain: data.cdnDomain,
+  n8nFileSystem: data.n8nFileSystem,
+  n8nAccessPoint: data.n8nAccessPoint,
+  n8nPublicHost: app.node.tryGetContext('n8nPublicHost'),
 });
