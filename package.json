@@ -15,12 +15,14 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@types/source-map-support": "^0.5.10",
     "aws-cdk": "^2",
     "ts-node": "^10",
     "typescript": "^5"
   },
   "dependencies": {
     "aws-cdk-lib": "^2",
-    "constructs": "^10"
+    "constructs": "^10",
+    "source-map-support": "^0.5.21"
   }
 }

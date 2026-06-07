@@ -2,8 +2,8 @@
 
 ## Prerequisites
 - [ ] Install AWS CLI and configure credentials
-- [ ] Install CDK CLI (`npm install -g aws-cdk`)
-- [ ] Run `npx cdk bootstrap` (one-time per account/region)
+- [ ] Install CDK CLI (`pnpm add -g aws-cdk`)
+- [ ] Run `pnpm cdk bootstrap` (one-time per account/region)
 - [ ] Create CloudFlare account (free tier)
 
 ## CloudFlare Tunnels
@@ -23,7 +23,7 @@
 - [ ] Dockerfile for living-uterus backend
 
 ## Deploy
-- [ ] First deploy: `npx cdk deploy --all` with tunnel tokens
+- [ ] First deploy: `pnpm cdk deploy --all` with tunnel tokens
 - [ ] Create per-service databases in RDS (ai_agents, laguna, living_uterus)
 - [ ] Enable pgvector extension for living-uterus RAG (`CREATE EXTENSION vector;`)
 - [ ] Test CloudFlare tunnel routing per subdomain

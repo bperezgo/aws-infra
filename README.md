@@ -21,11 +21,11 @@ Personal project infrastructure on AWS using CDK TypeScript.
 ## Setup
 
 ```bash
-npm install
-npx cdk bootstrap   # first time only
+pnpm install
+pnpm cdk bootstrap   # first time only
 
 # Set tunnel tokens
-npx cdk deploy --all \
+pnpm cdk deploy --all \
   -c cfTunnelAiAgents=<token> \
   -c cfTunnelLaguna=<token> \
   -c cfTunnelLivingUterus=<token>
@@ -35,7 +35,7 @@ npx cdk deploy --all \
 
 1. Add a new `EcsService` construct in `lib/stacks/services-stack.ts`
 2. Add CloudFlare tunnel token context variable
-3. `npx cdk deploy bryan-dev-services`
+3. `pnpm cdk deploy bryan-dev-services`
 
 ## Turn Services On/Off
 
