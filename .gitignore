@@ -1,0 +1,15 @@
+# CDK
+cdk.out/
+dist/
+node_modules/
+
+# Sensitive
+*.tfvars
+*.pem
+*.key
+.env
+
+# TypeScript
+*.js
+*.d.ts
+!jest.config.js
