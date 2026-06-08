@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { DataStack } from '../lib/stacks/data-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
+
+const imageTags = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'image-tags.json'), 'utf8'),
+) as { laguna: string; n8n: string };
 
 const app = new cdk.App();
 
@@ -37,9 +43,8 @@ new ServicesStack(app, `${projectName}-services`, {
   namespace: network.namespace,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
-  assetsBucket: data.assetsBucket,
-  cdnDomain: data.cdnDomain,
   n8nFileSystem: data.n8nFileSystem,
   n8nAccessPoint: data.n8nAccessPoint,
   n8nPublicHost: app.node.tryGetContext('n8nPublicHost'),
+  imageTags,
 });

@@ -18,8 +18,8 @@ export class NetworkStack extends cdk.Stack {
 
     const { projectName } = props;
 
-    // VPC — 2 AZs, public + private subnets
-    // No NAT Gateway — use VPC endpoints instead ($0 vs $64/month)
+    // 2 AZs required for RDS DB subnet group (AWS hard rule).
+    // No NAT Gateway — use VPC endpoints instead ($0 vs $64/month).
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       vpcName: `${projectName}-vpc`,
       maxAzs: 2,
@@ -43,6 +43,14 @@ export class NetworkStack extends cdk.Stack {
       ],
     });
 
+    // Interface endpoints pinned to single AZ to halve ENI cost (~$28/mo
+    // saved vs deploying in both AZs). Cross-AZ traffic to endpoint ~$0.01/GB,
+    // acceptable at dev scale. Bump to both AZs if HA matters.
+    const endpointSubnets: ec2.SubnetSelection = {
+      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      availabilityZones: [this.vpc.availabilityZones[0]],
+    };
+
     // VPC Endpoints — avoid NAT Gateway, services still reach AWS APIs
     this.vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
@@ -50,18 +58,22 @@ export class NetworkStack extends cdk.Stack {
 
     this.vpc.addInterfaceEndpoint('EcrApiEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR,
+      subnets: endpointSubnets,
     });
 
     this.vpc.addInterfaceEndpoint('EcrDkrEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+      subnets: endpointSubnets,
     });
 
     this.vpc.addInterfaceEndpoint('LogsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      subnets: endpointSubnets,
     });
 
     this.vpc.addInterfaceEndpoint('SecretsEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      subnets: endpointSubnets,
     });
 
     // ECS Cluster — Fargate Spot default

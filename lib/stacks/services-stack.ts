@@ -3,8 +3,6 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import * as rds from 'aws-cdk-lib/aws-rds';
-import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
@@ -17,8 +15,6 @@ export interface ServicesStackProps extends cdk.StackProps {
   namespace: servicediscovery.IPrivateDnsNamespace;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
-  assetsBucket: s3.IBucket;
-  cdnDomain: string;
   n8nFileSystem: efs.IFileSystem;
   n8nAccessPoint: efs.IAccessPoint;
   /**
@@ -26,6 +22,14 @@ export interface ServicesStackProps extends cdk.StackProps {
    * Used for WEBHOOK_URL so callback URLs in OAuth/WhatsApp/etc resolve correctly.
    */
   n8nPublicHost?: string;
+  /**
+   * Container image tags, sourced from image-tags.json at repo root.
+   * Bump the file and redeploy to roll a service.
+   */
+  imageTags: {
+    laguna: string;
+    n8n: string;
+  };
 }
 
 export class ServicesStack extends cdk.Stack {
@@ -39,11 +43,10 @@ export class ServicesStack extends cdk.Stack {
       namespace,
       database,
       dbSecurityGroup,
-      assetsBucket,
-      cdnDomain,
       n8nFileSystem,
       n8nAccessPoint,
       n8nPublicHost,
+      imageTags,
     } = props;
 
     // Re-import DB SG by ID so ingress rules added below land in this
@@ -59,11 +62,9 @@ export class ServicesStack extends cdk.Stack {
     const dbPort = database.dbInstanceEndpointPort;
 
     // Tunnel tokens from context or SSM
-    // Pass via: cdk deploy -c cfTunnelAiAgents=xxx -c cfTunnelLaguna=xxx ...
+    // Pass via: cdk deploy -c cfTunnelLaguna=xxx -c cfTunnelN8n=xxx
     // Or set in cdk.json context
-    const cfTunnelAiAgents = this.node.tryGetContext('cfTunnelAiAgents') || '';
     const cfTunnelLaguna = this.node.tryGetContext('cfTunnelLaguna') || '';
-    const cfTunnelLivingUterus = this.node.tryGetContext('cfTunnelLivingUterus') || '';
     const cfTunnelN8n = this.node.tryGetContext('cfTunnelN8n') || '';
 
     // n8n encryption key — used to encrypt stored credentials at rest.
@@ -80,35 +81,13 @@ export class ServicesStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // --- AI Agents Service ---
-    const aiAgents = new EcsService(this, 'AiAgents', {
-      vpc,
-      cluster,
-      namespace,
-      serviceName: 'ai-agents',
-      containerImage: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/ai-agents:latest`,
-      containerPort: 8080,
-      cpu: 512,
-      memory: 1024,
-      desiredCount: 1,
-      cloudflareTunnelToken: cfTunnelAiAgents,
-      environment: {
-        DB_HOST: dbAddress,
-        DB_PORT: dbPort,
-        DB_NAME: 'ai_agents',
-      },
-      secrets: {
-        DB_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, 'password'),
-      },
-    });
-
     // --- Laguna Escondida ---
     const laguna = new EcsService(this, 'Laguna', {
       vpc,
       cluster,
       namespace,
       serviceName: 'laguna',
-      containerImage: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/laguna-escondida:latest`,
+      containerImage: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/laguna-escondida:${imageTags.laguna}`,
       containerPort: 8080,
       cpu: 256,
       memory: 512,
@@ -124,33 +103,6 @@ export class ServicesStack extends cdk.Stack {
       },
     });
 
-    // --- Living Uterus ---
-    const livingUterus = new EcsService(this, 'LivingUterus', {
-      vpc,
-      cluster,
-      namespace,
-      serviceName: 'living-uterus',
-      containerImage: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/living-uterus:latest`,
-      containerPort: 8080,
-      cpu: 512,
-      memory: 1024,
-      desiredCount: 1,
-      cloudflareTunnelToken: cfTunnelLivingUterus,
-      environment: {
-        DB_HOST: dbAddress,
-        DB_PORT: dbPort,
-        DB_NAME: 'living_uterus',
-        ASSETS_BUCKET: assetsBucket.bucketName,
-        CDN_DOMAIN: cdnDomain,
-      },
-      secrets: {
-        DB_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, 'password'),
-      },
-    });
-
-    // Grant living-uterus S3 access for video uploads
-    assetsBucket.grantReadWrite(livingUterus.taskDefinition.taskRole, 'living-uterus/*');
-
     // --- n8n (workflow automation) ---
     // Runs as uid 1000 (n8n container's `node` user). State persists on EFS
     // at /home/node/.n8n via Access Point (chrooted + uid/gid enforced).
@@ -164,7 +116,7 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       namespace,
       serviceName: 'n8n',
-      containerImage: 'n8nio/n8n:latest',
+      containerImage: `n8nio/n8n:${imageTags.n8n}`,
       containerPort: 5678,
       cpu: 512,
       memory: 1024,
@@ -201,7 +153,7 @@ export class ServicesStack extends cdk.Stack {
 
     // Grant all services DB access — ingress added on imported SG handle
     // so the rule resource lives in this stack.
-    [aiAgents, laguna, livingUterus, n8n].forEach((svc) => {
+    [laguna, n8n].forEach((svc) => {
       dbSgLocal.addIngressRule(
         svc.securityGroup,
         ec2.Port.tcp(5432),
