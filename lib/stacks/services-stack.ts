@@ -43,12 +43,11 @@ export class ServicesStack extends cdk.Stack {
       imageTags,
     } = props;
 
-    // First-deploy bootstrap: ECR exists but no image yet → desiredCount 0,
-    // CFN won't wait for steady state. Push image, then flip via:
-    //   cdk deploy -c lagunaDesiredCount=1
-    //   or: ./scripts/service-toggle.sh laguna on
+    // Release-driven deploys: image at imageTags.laguna must exist in ECR
+    // before `cdk deploy` runs. Override to 0 if you need to scale down:
+    //   cdk deploy -c lagunaDesiredCount=0
     const lagunaDesiredCount = Number(
-      this.node.tryGetContext('lagunaDesiredCount') ?? 0,
+      this.node.tryGetContext('lagunaDesiredCount') ?? 1,
     );
 
     // Re-import DB SG by ID so ingress rules added below land in this

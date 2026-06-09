@@ -1,49 +1,52 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
-import * as fs from 'fs';
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
+import { loadAppConfig, loadImageTags } from '../lib/config';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { DataStack } from '../lib/stacks/data-stack';
 import { EcrStack } from '../lib/stacks/ecr-stack';
+import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
-
-const imageTags = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '..', 'image-tags.json'), 'utf8'),
-) as { laguna: string };
 
 const app = new cdk.App();
 
-const projectName = app.node.tryGetContext('projectName') || 'bryan-dev';
-const environment = app.node.tryGetContext('env') || 'dev';
-const env: cdk.Environment = {
-  account: process.env.CDK_DEFAULT_ACCOUNT,
-  region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-};
+// Fail fast — every required value must be set. No silent defaults.
+const cfg = loadAppConfig(app);
+const imageTags = loadImageTags(path.join(__dirname, '..'));
 
-cdk.Tags.of(app).add('Project', projectName);
-cdk.Tags.of(app).add('Environment', environment);
+const env: cdk.Environment = { account: cfg.account, region: cfg.region };
+
+cdk.Tags.of(app).add('Project', cfg.projectName);
+cdk.Tags.of(app).add('Environment', cfg.environment);
 cdk.Tags.of(app).add('ManagedBy', 'cdk');
 
-const network = new NetworkStack(app, `${projectName}-network`, {
+const network = new NetworkStack(app, `${cfg.projectName}-network`, {
   env,
-  projectName,
+  projectName: cfg.projectName,
 });
 
-const data = new DataStack(app, `${projectName}-data`, {
+const data = new DataStack(app, `${cfg.projectName}-data`, {
   env,
-  projectName,
+  projectName: cfg.projectName,
   vpc: network.vpc,
 });
 
-const ecr = new EcrStack(app, `${projectName}-ecr`, {
+const ecr = new EcrStack(app, `${cfg.projectName}-ecr`, {
   env,
-  projectName,
+  projectName: cfg.projectName,
 });
 
-new ServicesStack(app, `${projectName}-services`, {
+new CiStack(app, `${cfg.projectName}-ci`, {
   env,
-  projectName,
+  projectName: cfg.projectName,
+  ecr,
+  githubOwner: cfg.githubOwner,
+});
+
+new ServicesStack(app, `${cfg.projectName}-services`, {
+  env,
+  projectName: cfg.projectName,
   vpc: network.vpc,
   cluster: network.cluster,
   namespace: network.namespace,
