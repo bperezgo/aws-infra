@@ -9,7 +9,7 @@ import { ServicesStack } from '../lib/stacks/services-stack';
 
 const imageTags = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'image-tags.json'), 'utf8'),
-) as { laguna: string; n8n: string };
+) as { laguna: string };
 
 const app = new cdk.App();
 
@@ -43,8 +43,5 @@ new ServicesStack(app, `${projectName}-services`, {
   namespace: network.namespace,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
-  n8nFileSystem: data.n8nFileSystem,
-  n8nAccessPoint: data.n8nAccessPoint,
-  n8nPublicHost: app.node.tryGetContext('n8nPublicHost'),
   imageTags,
 });
