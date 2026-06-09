@@ -5,6 +5,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
 import { EcsService } from '../constructs/ecs-service';
+import { EcrStack } from './ecr-stack';
 
 export interface ServicesStackProps extends cdk.StackProps {
   projectName: string;
@@ -13,6 +14,12 @@ export interface ServicesStackProps extends cdk.StackProps {
   namespace: servicediscovery.IPrivateDnsNamespace;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
+  /**
+   * Stack owning all ECR repos. ServicesStack reads `ecr.laguna`, `ecr.aiAgents`,
+   * etc. directly — add a repo to EcrStack and it's available here, no prop wiring.
+   * Lifecycle decoupled: destroy services, images survive.
+   */
+  ecr: EcrStack;
   /**
    * Container image tags, sourced from image-tags.json at repo root.
    * Bump the file and redeploy to roll a service.
@@ -32,8 +39,17 @@ export class ServicesStack extends cdk.Stack {
       namespace,
       database,
       dbSecurityGroup,
+      ecr,
       imageTags,
     } = props;
+
+    // First-deploy bootstrap: ECR exists but no image yet → desiredCount 0,
+    // CFN won't wait for steady state. Push image, then flip via:
+    //   cdk deploy -c lagunaDesiredCount=1
+    //   or: ./scripts/service-toggle.sh laguna on
+    const lagunaDesiredCount = Number(
+      this.node.tryGetContext('lagunaDesiredCount') ?? 0,
+    );
 
     // Re-import DB SG by ID so ingress rules added below land in this
     // (services) stack, not the data stack. Avoids data <-> services cycle.
@@ -58,11 +74,11 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       namespace,
       serviceName: 'laguna',
-      containerImage: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/laguna-escondida:${imageTags.laguna}`,
+      containerImage: ecs.ContainerImage.fromEcrRepository(ecr.laguna, imageTags.laguna),
       containerPort: 8080,
       cpu: 256,
       memory: 512,
-      desiredCount: 1,
+      desiredCount: lagunaDesiredCount,
       cloudflareTunnelToken: cfTunnelLaguna,
       environment: {
         DB_HOST: dbAddress,

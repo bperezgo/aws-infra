@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { DataStack } from '../lib/stacks/data-stack';
+import { EcrStack } from '../lib/stacks/ecr-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 
 const imageTags = JSON.parse(
@@ -35,6 +36,11 @@ const data = new DataStack(app, `${projectName}-data`, {
   vpc: network.vpc,
 });
 
+const ecr = new EcrStack(app, `${projectName}-ecr`, {
+  env,
+  projectName,
+});
+
 new ServicesStack(app, `${projectName}-services`, {
   env,
   projectName,
@@ -43,5 +49,6 @@ new ServicesStack(app, `${projectName}-services`, {
   namespace: network.namespace,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
+  ecr,
   imageTags,
 });

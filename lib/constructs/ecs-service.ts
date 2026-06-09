@@ -20,7 +20,7 @@ export interface EcsServiceProps {
   cluster: ecs.ICluster;
   namespace: servicediscovery.IPrivateDnsNamespace;
   serviceName: string;
-  containerImage: string;
+  containerImage: ecs.ContainerImage;
   containerPort?: number;
   cpu?: number;
   memory?: number;
@@ -113,7 +113,7 @@ export class EcsService extends Construct {
 
     // Main container
     const container = this.taskDefinition.addContainer('app', {
-      image: ecs.ContainerImage.fromRegistry(containerImage),
+      image: containerImage,
       portMappings: [{ containerPort }],
       environment: {
         SERVICE_NAME: serviceName,

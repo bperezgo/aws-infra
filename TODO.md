@@ -13,8 +13,8 @@
 - [ ] Save tunnel tokens securely
 
 ## ECR Repos
+- [x] Create `laguna-escondida` ECR repository (managed by EcrStack)
 - [ ] Create `ai-agents` ECR repository
-- [ ] Create `laguna-escondida` ECR repository
 - [ ] Create `living-uterus` ECR repository
 
 ## Dockerize Services
