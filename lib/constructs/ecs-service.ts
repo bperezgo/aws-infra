@@ -125,7 +125,10 @@ export class EcsService extends Construct {
         streamPrefix: 'ecs',
       }),
       healthCheck: {
-        command: ['CMD-SHELL', `curl -f http://localhost:${containerPort}${healthCheckPath} || exit 1`],
+        // Use wget, not curl: the alpine-based service images ship busybox wget
+        // but not curl. --spider makes a request without downloading the body and
+        // exits non-zero on any non-2xx, which is exactly what ECS wants.
+        command: ['CMD-SHELL', `wget --no-verbose --tries=1 --spider http://localhost:${containerPort}${healthCheckPath} || exit 1`],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
