@@ -43,38 +43,18 @@ export class NetworkStack extends cdk.Stack {
       ],
     });
 
-    // Interface endpoints pinned to single AZ to halve ENI cost (~$28/mo
-    // saved vs deploying in both AZs). Cross-AZ traffic to endpoint ~$0.01/GB,
-    // acceptable at dev scale. Bump to both AZs if HA matters.
-    const endpointSubnets: ec2.SubnetSelection = {
-      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-      availabilityZones: [this.vpc.availabilityZones[0]],
-    };
-
-    // VPC Endpoints — avoid NAT Gateway, services still reach AWS APIs
+    // S3 gateway endpoint — FREE (gateway endpoints cost $0), so keep it.
     this.vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
     });
 
-    this.vpc.addInterfaceEndpoint('EcrApiEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.ECR,
-      subnets: endpointSubnets,
-    });
-
-    this.vpc.addInterfaceEndpoint('EcrDkrEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
-      subnets: endpointSubnets,
-    });
-
-    this.vpc.addInterfaceEndpoint('LogsEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-      subnets: endpointSubnets,
-    });
-
-    this.vpc.addInterfaceEndpoint('SecretsEndpoint', {
-      service: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
-      subnets: endpointSubnets,
-    });
+    // No interface (PrivateLink) endpoints — intentionally. Tasks run in public
+    // subnets with a public IP, so they already reach ECR / CloudWatch Logs /
+    // Secrets Manager free through the internet gateway; endpoints would only add
+    // ~$29/mo of idle ENIs. The private-subnet upgrade path (Mode B) uses a NAT,
+    // which also doesn't need endpoints — and endpoints-without-NAT (Mode C) is
+    // ruled out because cloudflared pulls from Docker Hub, which they can't reach.
+    // Full rationale: docs/networking-decisions.md.
 
     // ECS Cluster — Fargate Spot default
     this.cluster = new ecs.Cluster(this, 'Cluster', {

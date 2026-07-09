@@ -30,6 +30,12 @@ export interface EcsServiceProps {
   secrets?: Record<string, ecs.Secret>;
   cloudflareTunnelToken?: string;
   cloudflareTunnelTokenSecret?: ecs.Secret;
+  /**
+   * Image for the cloudflared tunnel sidecar. Pass a pinned tag from
+   * image-tags.json to avoid `latest` silently re-pulling a new version on
+   * every task placement. Defaults to `latest` only for backward compat.
+   */
+  cloudflaredImage?: ecs.ContainerImage;
   healthCheckPath?: string;
   efsVolumes?: EfsVolumeMount[];
   /**
@@ -63,6 +69,7 @@ export class EcsService extends Construct {
       secrets = {},
       cloudflareTunnelToken,
       cloudflareTunnelTokenSecret,
+      cloudflaredImage = ecs.ContainerImage.fromRegistry('cloudflare/cloudflared:latest'),
       healthCheckPath = '/health',
       efsVolumes = [],
       publicNetworking = true,
@@ -163,7 +170,7 @@ export class EcsService extends Construct {
     // CloudFlare Tunnel sidecar — prefer Secrets Manager over plaintext context
     if (hasTunnel) {
       this.taskDefinition.addContainer('cloudflared', {
-        image: ecs.ContainerImage.fromRegistry('cloudflare/cloudflared:latest'),
+        image: cloudflaredImage,
         command: ['tunnel', '--no-autoupdate', 'run'],
         environment: cloudflareTunnelTokenSecret
           ? undefined

@@ -27,6 +27,7 @@ export interface ServicesStackProps extends cdk.StackProps {
    */
   imageTags: {
     laguna: string;
+    cloudflared: string;
   };
 }
 
@@ -64,10 +65,25 @@ export class ServicesStack extends cdk.Stack {
     const dbAddress = database.dbInstanceEndpointAddress;
     const dbPort = database.dbInstanceEndpointPort;
 
-    // Tunnel tokens from context or SSM
-    // Pass via: cdk deploy -c cfTunnelLaguna=xxx
-    // Or set in cdk.json context
-    const cfTunnelLaguna = this.node.tryGetContext('cfTunnelLaguna') || '';
+    // Infra/platform secrets the laguna RUNTIME reads — one JSON secret, billed per
+    // secret not per key, so add keys instead of new secrets. IAM grants access to
+    // the whole secret, so ONLY put values the task itself may read here (tunnel
+    // token, future sidecar/agent creds). Deploy-time/provisioning credentials
+    // (e.g. a Cloudflare *API* token that can edit DNS) must NOT live here — keep
+    // those in a separate secret no task ever reads. Create it once:
+    //   aws secretsmanager create-secret --name <projectName>/laguna/infra \
+    //     --region us-east-1 --secret-string '{"CF_TUNNEL_TOKEN":"<token>"}'
+    // The sidecar reads CF_TUNNEL_TOKEN as TUNNEL_TOKEN. Skip the tunnel for a
+    // VPC-only boot test with: cdk deploy bryan-dev-services -c lagunaTunnel=off
+    const lagunaInfraSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'LagunaInfraSecret',
+      `${projectName}/laguna/infra`,
+    );
+    const tunnelEnabled = this.node.tryGetContext('lagunaTunnel') !== 'off';
+    const cfTunnelTokenSecret = tunnelEnabled
+      ? ecs.Secret.fromSecretsManager(lagunaInfraSecret, 'CF_TUNNEL_TOKEN')
+      : undefined;
 
     // App-level config (invoice provider, JWT, admin key, object-storage creds,
     // org id) lives in one JSON secret created out-of-band — never in the template:
@@ -92,7 +108,12 @@ export class ServicesStack extends cdk.Stack {
       cpu: 256,
       memory: 512,
       desiredCount: lagunaDesiredCount,
-      cloudflareTunnelToken: cfTunnelLaguna,
+      cloudflareTunnelTokenSecret: cfTunnelTokenSecret,
+      // Pinned sidecar tag from image-tags.json — avoids `latest` re-pulling a
+      // new cloudflared on every task placement (spot reclaim, scale, restart).
+      cloudflaredImage: ecs.ContainerImage.fromRegistry(
+        `cloudflare/cloudflared:${imageTags.cloudflared}`,
+      ),
       // App serves /api/health (not /health); the construct health check hits this.
       healthCheckPath: '/api/health',
       environment: {
@@ -102,7 +123,8 @@ export class ServicesStack extends cdk.Stack {
         APP_MODE: 'cloud',
         DB_HOST: dbAddress,
         DB_PORT: dbPort,
-        DB_NAME: 'laguna',
+        // One database per project on the shared RDS instance; keeps the DO name.
+        DB_NAME: 'laguna_escondida',
         // RDS Postgres 16 defaults rds.force_ssl=1, so plaintext is refused.
         DB_SSLMODE: 'require',
       },

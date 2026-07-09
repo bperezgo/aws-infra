@@ -19,9 +19,6 @@
     "env": "dev",
 
     "_comment_githubOwner": "GitHub user/org owning the backend repos. Used to scope OIDC trust in CiStack.",
-    "githubOwner": "bperezgo",
-
-    "_comment_cfTunnels": "Cloudflare Tunnel tokens — create tunnels in CF dashboard, paste tokens via -c flags or here. NEVER commit real tokens; use -c at deploy time or load from SSM/Secrets Manager.",
-    "cfTunnelLaguna": ""
+    "githubOwner": "bperezgo"
   }
 }

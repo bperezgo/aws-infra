@@ -39,7 +39,6 @@ export function loadAppConfig(app: cdk.App): AppConfig {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? process.env.AWS_REGION,
     githubOwner: app.node.tryGetContext('githubOwner'),
-    cfTunnelLaguna: app.node.tryGetContext('cfTunnelLaguna') || undefined,
   };
 
   return parseOrThrow(AppConfigSchema, raw, 'AppConfig', {
@@ -64,5 +63,6 @@ export function loadImageTags(repoRoot: string): ImageTags {
 
   return parseOrThrow(ImageTagsSchema, raw, 'image-tags.json', {
     laguna: 'bump to the release tag pushed to ECR (e.g. "v0.1.0")',
+    cloudflared: 'pin to a cloudflared release tag (e.g. "2026.7.1") — not "latest"',
   });
 }
