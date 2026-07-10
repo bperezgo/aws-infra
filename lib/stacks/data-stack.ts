@@ -67,7 +67,7 @@ export class DataStack extends cdk.Stack {
 
     // --- S3 + CloudFront ---
     this.assetsBucket = new s3.Bucket(this, 'AssetsBucket', {
-      bucketName: `${projectName}-assets`,
+      bucketName: `${projectName}-laguna-assets`,
       versioned: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,

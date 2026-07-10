@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
@@ -21,6 +22,7 @@ export interface ServicesStackProps extends cdk.StackProps {
    * Lifecycle decoupled: destroy services, images survive.
    */
   ecr: EcrStack;
+  assetsBucket: s3.IBucket;
   /**
    * Container image tags, sourced from image-tags.json at repo root.
    * Bump the file and redeploy to roll a service.
@@ -43,6 +45,7 @@ export class ServicesStack extends cdk.Stack {
       database,
       dbSecurityGroup,
       ecr,
+      assetsBucket,
       imageTags,
     } = props;
 
@@ -152,6 +155,10 @@ export class ServicesStack extends cdk.Stack {
         NODE_SYNC_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NODE_SYNC_KEY'),
       },
     });
+
+    // Grant laguna read/write access to the assets bucket via task role —
+    // no explicit AWS credentials needed in the app; the SDK picks up the role.
+    assetsBucket.grantReadWrite(laguna.taskDefinition.taskRole);
 
     // Grant laguna DB access — ingress added on imported SG handle
     // so the rule resource lives in this stack.

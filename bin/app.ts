@@ -54,6 +54,7 @@ new ServicesStack(app, `${cfg.projectName}-services`, {
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
   ecr,
+  assetsBucket: data.assetsBucket,
   imageTags,
 });
 
