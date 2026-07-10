@@ -9,6 +9,9 @@ node_modules/
 *.key
 .env
 
+# Database dumps — never commit (business data; produced by the DO→RDS migration)
+*.dump
+
 # TypeScript
 *.js
 *.d.ts

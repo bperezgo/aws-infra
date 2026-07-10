@@ -68,10 +68,15 @@ export class DbAdminStack extends cdk.Stack {
     });
 
     taskDef.addContainer('dbadmin', {
-      // AWS's public mirror of the official postgres image — ships psql, and avoids
-      // Docker Hub auth/rate limits.
+      // AWS's public mirror of the official postgres image — ships psql/pg_restore,
+      // and avoids Docker Hub auth/rate limits. Pinned to 18 (not 16, the RDS server
+      // version) because pg_restore must be >= the pg_dump that wrote the archive:
+      // our DO dump is made by a local pg_dump 18 (archive format v1.16), which a v16
+      // pg_restore refuses ("unsupported version (1.16)"). A newer client doing a
+      // DATA-ONLY restore into a PG16 server is fully supported (just COPY/setval),
+      // and psql 18 remains fine for all the run-sql.sh scripts against PG16.
       image: ecs.ContainerImage.fromRegistry(
-        'public.ecr.aws/docker/library/postgres:16-alpine',
+        'public.ecr.aws/docker/library/postgres:18-alpine',
       ),
       // Standard libpq env so `psql` needs no connection flags. Connect to the
       // default 'postgres' maintenance DB — CREATE DATABASE can't run from inside
