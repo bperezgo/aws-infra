@@ -191,6 +191,11 @@ export class EcsService extends Construct {
       cluster,
       taskDefinition: this.taskDefinition,
       desiredCount,
+      // Fail fast: if a new deployment can't reach a steady state (task keeps
+      // crashing or failing its health check), give up in minutes and roll the
+      // service back — instead of ECS silently retrying for ~3 hours before
+      // CloudFormation reports NotStabilized. Makes bad boots obvious quickly.
+      circuitBreaker: { rollback: true },
       assignPublicIp: publicNetworking,
       securityGroups: [this.securityGroup],
       vpcSubnets: {

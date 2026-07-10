@@ -8,6 +8,7 @@ import { DataStack } from '../lib/stacks/data-stack';
 import { EcrStack } from '../lib/stacks/ecr-stack';
 import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
+import { DbAdminStack } from '../lib/stacks/db-admin-stack';
 
 const app = new cdk.App();
 
@@ -54,4 +55,15 @@ new ServicesStack(app, `${cfg.projectName}-services`, {
   dbSecurityGroup: data.dbSecurityGroup,
   ecr,
   imageTags,
+});
+
+// On-demand DB admin task (create databases/roles, import dumps) run from inside
+// the VPC. Defines a runnable task only — trigger it with scripts/db/run-sql.sh.
+new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
+  env,
+  projectName: cfg.projectName,
+  vpc: network.vpc,
+  cluster: network.cluster,
+  database: data.database,
+  dbSecurityGroup: data.dbSecurityGroup,
 });

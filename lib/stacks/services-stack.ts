@@ -129,23 +129,27 @@ export class ServicesStack extends cdk.Stack {
         DB_SSLMODE: 'require',
       },
       secrets: {
-        // DB creds come from the RDS-generated master secret. The master user is
-        // 'dbadmin' (see data-stack), NOT the app's 'postgres' default — so wire
-        // the username too, don't rely on the default.
-        DB_USER: ecs.Secret.fromSecretsManager(database.secret!, 'username'),
-        DB_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, 'password'),
+        // DB creds are the app-scoped role `laguna_app` (created by
+        // scripts/db/create-laguna-role.sql), NOT the shared master `dbadmin`.
+        // A leak of these can only touch laguna_escondida — no other database on
+        // the shared instance. Values live in the app secret; host/port/name are
+        // set above as plain env because CDK knows them, not the secret.
+        DB_USER: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'DB_USER'),
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'DB_PASSWORD'),
         // Required by config.NewConfig() — any empty value is a fatal boot error.
         JWT_SECRET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'JWT_SECRET'),
         ADMIN_API_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ADMIN_API_KEY'),
         ELECTRONIC_INVOICE_URL: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_URL'),
         ELECTRONIC_INVOICE_USER: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_USER'),
         ELECTRONIC_INVOICE_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PASSWORD'),
+        ELECTRONIC_INVOICE_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PREFIX'),
+        SUPPORT_DOCUMENT_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SUPPORT_DOCUMENT_PREFIX'),
         SPACES_REGION: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_REGION'),
-        SPACES_ENDPOINT: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_ENDPOINT'),
         SPACES_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_KEY'),
         SPACES_SECRET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_SECRET'),
         SPACES_BUCKET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_BUCKET'),
         ORGANIZATION_ID: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ORGANIZATION_ID'),
+        NODE_SYNC_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NODE_SYNC_KEY'),
       },
     });
 
@@ -154,7 +158,8 @@ export class ServicesStack extends cdk.Stack {
     dbSgLocal.addIngressRule(
       laguna.securityGroup,
       ec2.Port.tcp(5432),
-      `${laguna.node.id} -> postgres`,
+      // NB: SG rule descriptions reject '>' — keep it to the allowed charset.
+      `${laguna.node.id} to postgres`,
     );
   }
 }
