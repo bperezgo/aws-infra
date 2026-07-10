@@ -91,10 +91,14 @@ export class EcsService extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    // Task definition — add extra resources if tunnel sidecar
+    // Task definition. Fargate only accepts specific CPU/memory PAIRS (e.g. 0.25
+    // vCPU allows 512/1024/2048 MB; 0.5 vCPU needs >=1024) — an arbitrary bump
+    // like +256 MB (-> 768) is rejected at deploy. The cloudflared sidecar is
+    // lightweight, so when present we keep CPU at the app's tier and step memory
+    // up to the next valid value (512 -> 1024) to give both containers headroom.
     this.taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef', {
-      cpu: hasTunnel ? cpu + 256 : cpu,
-      memoryLimitMiB: hasTunnel ? memory + 256 : memory,
+      cpu,
+      memoryLimitMiB: hasTunnel ? memory * 2 : memory,
     });
 
     // EFS volumes — register on task def, build mount points for app container
