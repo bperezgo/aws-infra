@@ -100,6 +100,13 @@ export class ServicesStack extends cdk.Stack {
       `${projectName}/laguna/app`,
     );
 
+    // CloudFront private key for signing asset URLs — stored as raw PEM (not JSON).
+    const lagunaCfSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'LagunaCfSecret',
+      `${projectName}/laguna/cloudfront`,
+    );
+
     // --- Laguna Escondida ---
     const laguna = new EcsService(this, 'Laguna', {
       vpc,
@@ -130,6 +137,8 @@ export class ServicesStack extends cdk.Stack {
         DB_NAME: 'laguna_escondida',
         // RDS Postgres 16 defaults rds.force_ssl=1, so plaintext is refused.
         DB_SSLMODE: 'require',
+        // CloudFront key pair ID for signed URL generation (not sensitive).
+        CDN_KEY_PAIR_ID: 'K12A0TYQP3OGH7',
       },
       secrets: {
         // DB creds are the app-scoped role `laguna_app` (created by
@@ -147,18 +156,22 @@ export class ServicesStack extends cdk.Stack {
         ELECTRONIC_INVOICE_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PASSWORD'),
         ELECTRONIC_INVOICE_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PREFIX'),
         SUPPORT_DOCUMENT_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SUPPORT_DOCUMENT_PREFIX'),
-        SPACES_REGION: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_REGION'),
-        SPACES_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_KEY'),
-        SPACES_SECRET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_SECRET'),
-        SPACES_BUCKET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SPACES_BUCKET'),
+        STORAGE_BUCKET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'STORAGE_BUCKET'),
+        STORAGE_REGION: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'STORAGE_REGION'),
+        CDN_URL: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'CDN_URL'),
         ORGANIZATION_ID: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ORGANIZATION_ID'),
         NODE_SYNC_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NODE_SYNC_KEY'),
+        // Raw PEM — entire secret value, no JSON field.
+        CDN_PRIVATE_KEY: ecs.Secret.fromSecretsManager(lagunaCfSecret),
       },
     });
 
     // Grant laguna read/write access to the assets bucket via task role —
     // no explicit AWS credentials needed in the app; the SDK picks up the role.
     assetsBucket.grantReadWrite(laguna.taskDefinition.taskRole);
+
+    // Allow the task to read the CloudFront private key at startup.
+    lagunaCfSecret.grantRead(laguna.taskDefinition.taskRole);
 
     // Grant laguna DB access — ingress added on imported SG handle
     // so the rule resource lives in this stack.

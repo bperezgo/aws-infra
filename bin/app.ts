@@ -9,6 +9,7 @@ import { EcrStack } from '../lib/stacks/ecr-stack';
 import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
+import { TailscaleStack } from '../lib/stacks/tailscale-stack';
 
 const app = new cdk.App();
 
@@ -68,3 +69,17 @@ new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
 });
+
+// Tailscale subnet router — opt-in, set tailscaleAuthKeyArn in cdk.json context
+// or pass -c tailscaleAuthKeyArn=arn:... at deploy time.
+// See docs/tailscale-db-access.md for the full setup guide.
+const tailscaleAuthKeyArn = app.node.tryGetContext('tailscaleAuthKeyArn') as string | undefined;
+if (tailscaleAuthKeyArn) {
+  new TailscaleStack(app, `${cfg.projectName}-tailscale`, {
+    env,
+    projectName: cfg.projectName,
+    vpc: network.vpc,
+    dbSecurityGroup: data.dbSecurityGroup,
+    tailscaleAuthKeySecretArn: tailscaleAuthKeyArn,
+  });
+}

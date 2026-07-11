@@ -74,12 +74,21 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // Key pair created out-of-band (openssl + CloudFront console).
+    // Public key ID: K12A0TYQP3OGH7 — private key stored in bryan-dev/laguna/cloudfront.
+    const cfKeyGroup = cloudfront.KeyGroup.fromKeyGroupId(
+      this,
+      'CfKeyGroup',
+      '4765a277-2318-4b39-8cfa-3b4bebc0d55e',
+    );
+
     const cdn = new cloudfront.Distribution(this, 'CDN', {
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(this.assetsBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         compress: true,
+        trustedKeyGroups: [cfKeyGroup],
       },
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // Cheapest — US/EU
       defaultRootObject: 'index.html',

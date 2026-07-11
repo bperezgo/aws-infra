@@ -19,6 +19,10 @@
     "env": "dev",
 
     "_comment_githubOwner": "GitHub user/org owning the backend repos. Used to scope OIDC trust in CiStack.",
-    "githubOwner": "bperezgo"
+    "githubOwner": "bperezgo",
+
+    "_comment_tailscaleAuthKeyArn": "Optional. When set, deploys a Tailscale subnet router EC2 for local DBeaver→RDS access. See docs/tailscale-db-access.md.",
+    "_comment_tailscaleAuthKeyArn_example": "\"tailscaleAuthKeyArn\": \"arn:aws:secretsmanager:us-east-1:123456789012:secret:bryan-dev/tailscale/auth-key-XXXXXX\"",
+    "tailscaleAuthKeyArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:bryan-dev/tailscale/auth-key-XXXXXX"
   }
 }
