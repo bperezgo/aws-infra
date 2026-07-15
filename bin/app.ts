@@ -10,6 +10,7 @@ import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
 import { TailscaleStack } from '../lib/stacks/tailscale-stack';
+import { CostStack } from '../lib/stacks/cost-stack';
 
 const app = new cdk.App();
 
@@ -27,26 +28,30 @@ const network = new NetworkStack(app, `${cfg.projectName}-network`, {
   env,
   projectName: cfg.projectName,
 });
+cdk.Tags.of(network).add('Service', 'network');
 
 const data = new DataStack(app, `${cfg.projectName}-data`, {
   env,
   projectName: cfg.projectName,
   vpc: network.vpc,
 });
+cdk.Tags.of(data).add('Service', 'data');
 
 const ecr = new EcrStack(app, `${cfg.projectName}-ecr`, {
   env,
   projectName: cfg.projectName,
 });
+cdk.Tags.of(ecr).add('Service', 'ecr');
 
-new CiStack(app, `${cfg.projectName}-ci`, {
+const ci = new CiStack(app, `${cfg.projectName}-ci`, {
   env,
   projectName: cfg.projectName,
   ecr,
   githubOwner: cfg.githubOwner,
 });
+cdk.Tags.of(ci).add('Service', 'ci');
 
-new ServicesStack(app, `${cfg.projectName}-services`, {
+const services = new ServicesStack(app, `${cfg.projectName}-services`, {
   env,
   projectName: cfg.projectName,
   vpc: network.vpc,
@@ -58,10 +63,11 @@ new ServicesStack(app, `${cfg.projectName}-services`, {
   assetsBucket: data.assetsBucket,
   imageTags,
 });
+cdk.Tags.of(services).add('Service', 'services');
 
 // On-demand DB admin task (create databases/roles, import dumps) run from inside
 // the VPC. Defines a runnable task only — trigger it with scripts/db/run-sql.sh.
-new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
+const dbAdmin = new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
   env,
   projectName: cfg.projectName,
   vpc: network.vpc,
@@ -69,6 +75,7 @@ new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
 });
+cdk.Tags.of(dbAdmin).add('Service', 'dbadmin');
 
 // Tailscale subnet router — opt-in, set tailscaleAuthKeyArn in cdk.json context
 // or pass -c tailscaleAuthKeyArn=arn:... at deploy time.
@@ -83,3 +90,11 @@ if (tailscaleAuthKeyArn) {
     tailscaleAuthKeySecretArn: tailscaleAuthKeyArn,
   });
 }
+
+// Cost monitoring — CE resources require us-east-1 regardless of project region.
+new CostStack(app, `${cfg.projectName}-cost`, {
+  env: { account: cfg.account, region: 'us-east-1' },
+  projectName: cfg.projectName,
+  alertEmail: 'alerts@example.com',
+  monthlyBudgetUsd: 50,
+});
