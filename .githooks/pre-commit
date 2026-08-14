@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# Pre-commit gate — the local enforcement point of the harness.
+#
+# Runs the same keyless rungs as CI so a broken change never even becomes a commit:
+#   typecheck → assertion tests → offline synth (which runs the Guardrails aspect).
+#
+# Auto-wired by `pnpm install` (the "prepare" script sets core.hooksPath=.githooks).
+# In a genuine emergency, bypass with:  git commit --no-verify
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "▶ harness: type-check"
+pnpm typecheck
+
+echo "▶ harness: tests"
+pnpm test
+
+echo "▶ harness: synth + guardrails (offline)"
+# Same invocation as CI: cached-AZ account, Tailscale skipped (its SSM lookup needs
+# AWS creds). The Guardrails aspect runs here — a rule violation fails the commit.
+CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=us-east-1 \
+  pnpm cdk synth -c tailscaleAuthKeyArn= --quiet >/dev/null
+
+echo "✓ harness: all rungs green — commit allowed"

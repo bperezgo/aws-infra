@@ -1,0 +1,46 @@
+name: CI
+
+# Fast, credential-free gate for every change to the CDK app. All three rungs run
+# without touching AWS: type-check → assertion tests → offline synth. Deploy stays
+# manual (pnpm deploy). A future `cdk diff` rung would need AWS creds via the OIDC
+# role in CiStack — left out here to keep CI keyless.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version here — pnpm/action-setup reads it from package.json#packageManager.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      - name: Test (CDK assertions)
+        run: pnpm test
+
+      - name: Synth (offline)
+        # Reuse the account whose AZs are cached in cdk.context.json so the VPC's
+        # AZ lookup resolves with no AWS call. Skip the Tailscale stack — it's the
+        # only one needing a live SSM lookup (latestAmazonLinux2023).
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: us-east-1
+        run: pnpm cdk synth -c tailscaleAuthKeyArn= --quiet

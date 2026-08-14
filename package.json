@@ -1,17 +1,26 @@
 {
   "name": "aws-infra",
   "version": "1.0.0",
+  "packageManager": "pnpm@11.7.0",
   "bin": {
     "aws-infra": "bin/app.ts"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "build": "tsc",
     "watch": "tsc -w",
+    "typecheck": "tsc --noEmit",
+    "test": "TS_NODE_TRANSPILE_ONLY=1 node --require ts-node/register --test test/*.test.ts",
+    "test:watch": "TS_NODE_TRANSPILE_ONLY=1 node --require ts-node/register --test --watch test/*.test.ts",
     "cdk": "cdk",
     "synth": "cdk synth",
     "deploy": "cdk deploy --all",
     "diff": "cdk diff",
-    "destroy": "cdk destroy --all"
+    "destroy": "cdk destroy --all",
+    "obs:up": "docker compose -f observability/docker-compose.dev.yml up -d",
+    "obs:down": "docker compose -f observability/docker-compose.dev.yml down",
+    "obs:logs": "docker compose -f observability/docker-compose.dev.yml logs -f",
+    "smoke": "bash scripts/observability/smoke.sh"
   },
   "devDependencies": {
     "@types/node": "^22",
