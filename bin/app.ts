@@ -11,8 +11,14 @@ import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
 import { TailscaleStack } from '../lib/stacks/tailscale-stack';
 import { CostStack } from '../lib/stacks/cost-stack';
+import { Guardrails } from '../lib/aspects/guardrails';
 
 const app = new cdk.App();
+
+// Enforcement layer — turns the rules documented in the stack comments into
+// synth-time errors (RETAIN on stateful stores, no NAT, private+encrypted S3/RDS).
+// A violation fails `cdk synth`, which fails the pre-commit hook and CI.
+cdk.Aspects.of(app).add(new Guardrails());
 
 // Fail fast — every required value must be set. No silent defaults.
 const cfg = loadAppConfig(app);
