@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
@@ -30,6 +32,7 @@ export interface ServicesStackProps extends cdk.StackProps {
   imageTags: {
     laguna: string;
     cloudflared: string;
+    alloy: string;
   };
 }
 
@@ -88,6 +91,33 @@ export class ServicesStack extends cdk.Stack {
       ? ecs.Secret.fromSecretsManager(lagunaInfraSecret, 'CF_TUNNEL_TOKEN')
       : undefined;
 
+    // --- Observability: Grafana Alloy sidecar (Phase 1) ---
+    // The Alloy sidecar ships the app's logs/metrics/traces to Grafana Cloud. Its
+    // config is a non-secret HCL file kept in the repo; the Grafana Cloud creds
+    // (OTLP gateway endpoint, instance ID, access-policy token) are three keys in
+    // the SAME laguna/infra secret as the tunnel token — add them there before
+    // deploy or the task fails to start. Only the token is truly sensitive, but
+    // all three are injected as secrets to keep it one place. The app never holds
+    // these — only Alloy does. Skip the sidecar for a boot test with:
+    //   cdk deploy bryan-dev-services -c lagunaAlloy=off
+    const alloyEnabled = this.node.tryGetContext('lagunaAlloy') !== 'off';
+    const alloyConfig = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'observability', 'alloy', 'ecs-cloud.alloy'),
+      'utf8',
+    );
+    const alloySecrets = alloyEnabled
+      ? {
+          GRAFANA_CLOUD_OTLP_ENDPOINT: ecs.Secret.fromSecretsManager(lagunaInfraSecret, 'GRAFANA_CLOUD_OTLP_ENDPOINT'),
+          GRAFANA_CLOUD_OTLP_USER: ecs.Secret.fromSecretsManager(lagunaInfraSecret, 'GRAFANA_CLOUD_OTLP_USER'),
+          GRAFANA_CLOUD_OTLP_TOKEN: ecs.Secret.fromSecretsManager(lagunaInfraSecret, 'GRAFANA_CLOUD_OTLP_TOKEN'),
+        }
+      : undefined;
+
+    // deployment.environment for telemetry resource attrs. Read from cdk.json
+    // context (`env`), the same value bin/app.ts validates; defaults to 'dev' so
+    // the offline test harness (which sets no context) still synths.
+    const deployEnv = String(this.node.tryGetContext('env') ?? 'dev');
+
     // App-level config (invoice provider, JWT, admin key, object-storage creds,
     // org id) lives in one JSON secret created out-of-band — never in the template:
     //   aws secretsmanager create-secret --name <projectName>/laguna/app \
@@ -124,6 +154,13 @@ export class ServicesStack extends cdk.Stack {
       cloudflaredImage: ecs.ContainerImage.fromRegistry(
         `cloudflare/cloudflared:${imageTags.cloudflared}`,
       ),
+      // Telemetry sidecar — pinned grafana/alloy tag from image-tags.json (pulled
+      // from Docker Hub, same as cloudflared). Config + creds wired above.
+      alloyImage: alloyEnabled
+        ? ecs.ContainerImage.fromRegistry(`grafana/alloy:${imageTags.alloy}`)
+        : undefined,
+      alloyConfig: alloyEnabled ? alloyConfig : undefined,
+      alloySecrets,
       // App serves /api/health (not /health); the construct health check hits this.
       healthCheckPath: '/api/health',
       environment: {
@@ -139,6 +176,21 @@ export class ServicesStack extends cdk.Stack {
         DB_SSLMODE: 'require',
         // CloudFront key pair ID for signed URL generation (not sensitive).
         CDN_KEY_PAIR_ID: 'K12A0TYQP3OGH7',
+        // Observability (Phase 1) — the app exports to the Alloy sidecar over the
+        // shared task loopback; Alloy forwards to Grafana Cloud. These are inert
+        // until the backend image adds the OTel SDK (implemented separately); the
+        // current image simply ignores unknown env. See
+        // docs/observability-backend-changes.md.
+        OBSERVABILITY_ENABLED: alloyEnabled ? 'true' : 'false',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4317',
+        OTEL_EXPORTER_OTLP_PROTOCOL: 'grpc',
+        OTEL_SERVICE_NAME: 'laguna',
+        // Ties every span/log/metric to the deployed release (from image-tags.json).
+        SERVICE_VERSION: imageTags.laguna,
+        ENVIRONMENT: deployEnv,
+        // Prometheus /metrics listener the Alloy sidecar scrapes (separate port so
+        // it's never exposed via the Cloudflare Tunnel).
+        METRICS_PORT: '9090',
       },
       secrets: {
         // DB creds are the app-scoped role `laguna_app` (created by

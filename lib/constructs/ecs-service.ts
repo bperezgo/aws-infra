@@ -35,7 +35,20 @@ export interface EcsServiceProps {
    * image-tags.json to avoid `latest` silently re-pulling a new version on
    * every task placement. Defaults to `latest` only for backward compat.
    */
-  cloudflaredImage?: ecs.ContainerImage;
+  cloudflaredImage: ecs.ContainerImage;
+  /**
+   * Grafana Alloy telemetry sidecar. When both `alloyImage` and `alloyConfig`
+   * are set, a NON-ESSENTIAL Alloy container is added: it receives OTLP
+   * logs+traces from the app on 127.0.0.1:4317/4318 and scrapes the app's
+   * Prometheus /metrics, forwarding all three to Grafana Cloud. Non-essential
+   * so a telemetry outage (crash/OOM) never takes the app — and the service —
+   * down. `alloyConfig` is the HCL config content; it's written to a file by the
+   * container entrypoint at boot (Fargate has no ConfigMap-style file mount).
+   * `alloySecrets` inject Grafana Cloud creds the config reads via sys.env().
+   */
+  alloyImage?: ecs.ContainerImage;
+  alloyConfig?: string;
+  alloySecrets?: Record<string, ecs.Secret>;
   healthCheckPath?: string;
   efsVolumes?: EfsVolumeMount[];
   /**
@@ -69,13 +82,17 @@ export class EcsService extends Construct {
       secrets = {},
       cloudflareTunnelToken,
       cloudflareTunnelTokenSecret,
-      cloudflaredImage = ecs.ContainerImage.fromRegistry('cloudflare/cloudflared:latest'),
+      cloudflaredImage,
+      alloyImage,
+      alloyConfig,
+      alloySecrets = {},
       healthCheckPath = '/health',
       efsVolumes = [],
       publicNetworking = true,
     } = props;
 
     const hasTunnel = !!(cloudflareTunnelToken || cloudflareTunnelTokenSecret);
+    const hasAlloy = !!(alloyImage && alloyConfig);
 
     // Security group — no inbound needed, CloudFlare Tunnel connects outbound
     this.securityGroup = new ec2.SecurityGroup(this, 'SG', {
@@ -93,12 +110,15 @@ export class EcsService extends Construct {
 
     // Task definition. Fargate only accepts specific CPU/memory PAIRS (e.g. 0.25
     // vCPU allows 512/1024/2048 MB; 0.5 vCPU needs >=1024) — an arbitrary bump
-    // like +256 MB (-> 768) is rejected at deploy. The cloudflared sidecar is
-    // lightweight, so when present we keep CPU at the app's tier and step memory
-    // up to the next valid value (512 -> 1024) to give both containers headroom.
+    // like +256 MB (-> 768) is rejected at deploy. The sidecars (cloudflared,
+    // alloy) are lightweight, so when either is present we keep CPU at the app's
+    // tier and step memory up to the next valid value (512 -> 1024) to give the
+    // containers headroom. Alloy is additionally hard-capped below so it can't
+    // starve the app; at 1-3 restaurants app + both sidecars fit in 1024. If
+    // Alloy OOMs under real load, bump memory (256 CPU also allows 2048).
     this.taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef', {
       cpu,
-      memoryLimitMiB: hasTunnel ? memory * 2 : memory,
+      memoryLimitMiB: hasTunnel || hasAlloy ? memory * 2 : memory,
     });
 
     // EFS volumes — register on task def, build mount points for app container
@@ -187,6 +207,31 @@ export class EcsService extends Construct {
           streamPrefix: 'cloudflared',
         }),
         essential: true,
+      });
+    }
+
+    // Grafana Alloy telemetry sidecar — NON-essential so a telemetry outage never
+    // takes the app down. Fargate has no ConfigMap-style file mount, so the config
+    // (a non-secret HCL string from the repo) is passed as an env var and written
+    // to a file by a tiny shell entrypoint before `alloy run`. Grafana Cloud creds
+    // stay in Secrets Manager and are read by the config via sys.env(). Hard memory
+    // cap keeps Alloy from starving the app if it balloons under load.
+    if (hasAlloy) {
+      this.taskDefinition.addContainer('alloy', {
+        image: alloyImage,
+        essential: false,
+        memoryLimitMiB: 256,
+        entryPoint: ['/bin/sh', '-c'],
+        command: [
+          "printf '%s' \"$ALLOY_CONFIG\" > /tmp/config.alloy && " +
+            'exec alloy run /tmp/config.alloy --storage.path=/tmp/alloy-data',
+        ],
+        environment: { ALLOY_CONFIG: alloyConfig },
+        secrets: alloySecrets,
+        logging: ecs.LogDrivers.awsLogs({
+          logGroup,
+          streamPrefix: 'alloy',
+        }),
       });
     }
 

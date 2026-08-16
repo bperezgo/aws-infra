@@ -69,7 +69,7 @@ export function synthServices(): { stack: ServicesStack; template: Template } {
     dbSecurityGroup: data.dbSecurityGroup,
     ecr,
     assetsBucket: data.assetsBucket,
-    imageTags: { laguna: 'v1.1.9', cloudflared: '2026.7.1' },
+    imageTags: { laguna: 'v1.1.9', cloudflared: '2026.7.1', alloy: 'v1.18.1' },
   });
   return { stack, template: Template.fromStack(stack) };
 }

@@ -32,6 +32,10 @@ export const ImageTagsSchema = z.object({
   // fails loudly at image pull, and the point is only to avoid the moving
   // "latest" pointer that silently re-pulls on every task placement.
   cloudflared: z.string().min(1, 'must not be empty (e.g. "2026.7.1") — avoid "latest"'),
+  // Grafana Alloy telemetry sidecar (grafana/alloy on Docker Hub). Third-party
+  // image we don't control, so loose like cloudflared — just a pinned, non-empty
+  // tag (e.g. "v1.18.1") so a spot reclaim / restart never re-pulls a new "latest".
+  alloy: z.string().min(1, 'must not be empty (e.g. "v1.18.1") — avoid "latest"'),
 });
 
 export type ImageTags = z.infer<typeof ImageTagsSchema>;

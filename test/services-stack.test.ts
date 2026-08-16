@@ -70,6 +70,41 @@ describe('ServicesStack — laguna', () => {
     });
   });
 
+  test('ships a Grafana Alloy telemetry sidecar that is non-essential', () => {
+    // Non-essential is the invariant that matters: a telemetry outage (Alloy
+    // crash/OOM) must never take the app container — and thus the service — down.
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({ Name: 'alloy', Essential: false }),
+      ]),
+    });
+  });
+
+  test('alloy receives the Grafana Cloud token as a secret, never plaintext', () => {
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Name: 'alloy',
+          Secrets: Match.arrayWith([
+            Match.objectLike({ Name: 'GRAFANA_CLOUD_OTLP_TOKEN' }),
+          ]),
+        }),
+      ]),
+    });
+  });
+
+  test('app is pointed at the alloy sidecar for OTLP export', () => {
+    const appEnvHas = (entry: { Name: string; Value: string }) =>
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        ContainerDefinitions: Match.arrayWith([
+          Match.objectLike({ Name: 'app', Environment: Match.arrayWith([entry]) }),
+        ]),
+      });
+
+    appEnvHas({ Name: 'OBSERVABILITY_ENABLED', Value: 'true' });
+    appEnvHas({ Name: 'OTEL_EXPORTER_OTLP_ENDPOINT', Value: 'http://127.0.0.1:4317' });
+  });
+
   test('DB secret is injected, never inlined as plaintext env', () => {
     template.hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: Match.arrayWith([

@@ -1,0 +1,63 @@
+// ECS cloud-task Alloy config (Phase 1) — see docs/observability-strategy.md
+// and docs/observability-backend-changes.md.
+//
+// Runs as a NON-ESSENTIAL sidecar in the laguna cloud task. All containers in a
+// Fargate task share one network namespace, so it talks to the app over
+// 127.0.0.1 (never exposed to the task ENI). It:
+//   - receives OTLP logs + traces from the app on 127.0.0.1:4317/4318
+//   - scrapes the app's Prometheus /metrics on 127.0.0.1:9090
+// and forwards all three to Grafana Cloud's OTLP gateway. Credentials are read
+// from env (injected from Secrets Manager on the sidecar) — the app never holds
+// them. This config is written to a file by the container entrypoint at boot;
+// it is NOT validated at `cdk synth`, so verify changes at deploy time.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ── Grafana Cloud exporter (OTLP gateway, all three signals) ──────────────────
+// Basic auth: username = OTLP instance ID, password = access-policy token.
+otelcol.auth.basic "grafana_cloud" {
+  username = sys.env("GRAFANA_CLOUD_OTLP_USER")
+  password = sys.env("GRAFANA_CLOUD_OTLP_TOKEN")
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+
+// ── Logs + traces: received from the app over OTLP, forwarded as-is ───────────
+otelcol.receiver.otlp "app" {
+  grpc {
+    endpoint = "127.0.0.1:4317"
+  }
+  http {
+    endpoint = "127.0.0.1:4318"
+  }
+
+  output {
+    logs   = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    // App metrics arrive via the Prometheus scrape below, not OTLP, but wiring
+    // this keeps the path open if the app later exports OTLP metrics too.
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
+
+// ── Metrics: scrape the app's Prometheus endpoint, convert to OTLP ────────────
+prometheus.scrape "app" {
+  targets         = [{ "__address__" = "127.0.0.1:9090" }]
+  metrics_path    = "/metrics"
+  scrape_interval = "30s"
+  forward_to      = [otelcol.receiver.prometheus.app.receiver]
+}
+
+otelcol.receiver.prometheus "app" {
+  output {
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
