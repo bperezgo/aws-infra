@@ -80,6 +80,38 @@ describe('ServicesStack — laguna', () => {
     });
   });
 
+  test('alloy sidecar health-checks its own /-/ready endpoint', () => {
+    // The Alloy image ships bash but NO wget/curl, so the check hits the built-in
+    // readiness endpoint on 127.0.0.1:12345 over bash's /dev/tcp (verified in prod).
+    // Alloy is non-essential, so an UNHEALTHY result is visibility only — it flips
+    // the ECS health field off UNKNOWN but never triggers task replacement.
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Name: 'alloy',
+          HealthCheck: Match.objectLike({
+            Command: Match.arrayWith([Match.stringLikeRegexp('/-/ready')]),
+          }),
+        }),
+      ]),
+    });
+  });
+
+  test('cloudflared pins its metrics port so /ready is deterministic', () => {
+    // The cloudflared image is DISTROLESS (no shell, no HTTP client) so it can't run
+    // a native ECS container healthcheck. Pinning --metrics makes its /ready endpoint
+    // land on a fixed port instead of a random one, so a neighbor container (shared
+    // netns) — or a devops agent via ECS Exec — can probe tunnel readiness.
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Name: 'cloudflared',
+          Command: Match.arrayWith(['--metrics', '127.0.0.1:2000']),
+        }),
+      ]),
+    });
+  });
+
   test('alloy receives the Grafana Cloud token as a secret, never plaintext', () => {
     template.hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: Match.arrayWith([

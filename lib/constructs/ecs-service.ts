@@ -195,7 +195,13 @@ export class EcsService extends Construct {
     if (hasTunnel) {
       this.taskDefinition.addContainer('cloudflared', {
         image: cloudflaredImage,
-        command: ['tunnel', '--no-autoupdate', 'run'],
+        // --metrics pins the readiness/metrics server to a fixed localhost port.
+        // Without it cloudflared binds a RANDOM port, so nothing can reliably find
+        // /ready. The image is distroless (no shell / wget / curl), so it can't run
+        // an ECS container healthCheck of its own — but a neighbor container (all
+        // task containers share the netns) or a devops agent via ECS Exec can now
+        // probe http://127.0.0.1:2000/ready to confirm the tunnel is connected.
+        command: ['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:2000', 'run'],
         environment: cloudflareTunnelTokenSecret
           ? undefined
           : { TUNNEL_TOKEN: cloudflareTunnelToken! },
@@ -232,6 +238,23 @@ export class EcsService extends Construct {
           logGroup,
           streamPrefix: 'alloy',
         }),
+        // Alloy serves /-/ready on its default HTTP port (127.0.0.1:12345). The
+        // image has bash but NO wget/curl, so we speak minimal HTTP over bash's
+        // /dev/tcp and assert a 200 status line. Non-essential, so an UNHEALTHY
+        // result never replaces the task — it just flips the ECS health field off
+        // UNKNOWN so a telemetry-pipeline stall is actually observable.
+        healthCheck: {
+          command: [
+            'CMD',
+            '/bin/bash',
+            '-c',
+            'exec 3<>/dev/tcp/127.0.0.1/12345 && printf "GET /-/ready HTTP/1.0\\r\\n\\r\\n" >&3 && head -1 <&3 | grep -q 200',
+          ],
+          interval: cdk.Duration.seconds(30),
+          timeout: cdk.Duration.seconds(5),
+          retries: 3,
+          startPeriod: cdk.Duration.seconds(30),
+        },
       });
     }
 
