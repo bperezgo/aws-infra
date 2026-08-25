@@ -12,6 +12,9 @@ node_modules/
 # Database dumps — never commit (business data; produced by the DO→RDS migration)
 *.dump
 
+# Docs are kept local — never committed (they hold real infra IDs; see CLAUDE.md)
+docs/
+
 # TypeScript
 *.js
 *.d.ts
