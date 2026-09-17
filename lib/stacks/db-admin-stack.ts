@@ -12,6 +12,7 @@ export interface DbAdminStackProps extends cdk.StackProps {
   cluster: ecs.ICluster;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
+  readonlyDbSecret: secretsmanager.ISecret;
 }
 
 /**
@@ -31,7 +32,7 @@ export class DbAdminStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: DbAdminStackProps) {
     super(scope, id, props);
 
-    const { projectName, vpc, cluster, database, dbSecurityGroup } = props;
+    const { projectName, vpc, cluster, database, dbSecurityGroup, readonlyDbSecret } = props;
 
     // SG for the admin task. Needs egress to pull the postgres image and to reach
     // RDS:5432; no inbound. Runs in a public subnet (Mode A) like the app tasks.
@@ -103,6 +104,9 @@ export class DbAdminStack extends cdk.Stack {
           ),
           'DB_PASSWORD',
         ),
+        // Injected so create-readonly-role.sql can set the laguna_readonly password
+        // from the auto-generated secret without it ever appearing in a file or CLI.
+        READONLY_DB_PASSWORD: ecs.Secret.fromSecretsManager(readonlyDbSecret, 'password'),
       },
       // Harmless default (a connectivity check); run-sql.sh overrides this.
       command: ['psql', '-c', 'SELECT 1'],

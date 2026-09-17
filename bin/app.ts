@@ -80,6 +80,7 @@ const dbAdmin = new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
   cluster: network.cluster,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
+  readonlyDbSecret: data.readonlyDbSecret,
 });
 cdk.Tags.of(dbAdmin).add('Service', 'dbadmin');
 
