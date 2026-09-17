@@ -41,6 +41,16 @@ describe('DataStack', () => {
     });
   });
 
+  test('readonly DB secret exists and is retained', () => {
+    template.hasResource('AWS::SecretsManager::Secret', {
+      DeletionPolicy: 'Retain',
+      UpdateReplacePolicy: 'Retain',
+      Properties: Match.objectLike({
+        Name: `${TEST_PROJECT}/rds/readonly`,
+      }),
+    });
+  });
+
   test('DB security group is not open to all outbound', () => {
     // allowAllOutbound:false → CDK drops the wide-open egress rule and inserts a
     // 255.255.255.255/32 deny-all placeholder instead. Its presence proves egress

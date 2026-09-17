@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { Construct } from 'constructs';
@@ -13,6 +14,7 @@ export interface DataStackProps extends cdk.StackProps {
 
 export class DataStack extends cdk.Stack {
   public readonly database: rds.DatabaseInstance;
+  public readonly readonlyDbSecret: secretsmanager.Secret;
   public readonly assetsBucket: s3.Bucket;
   public readonly cdnDomain: string;
   public readonly dbSecurityGroup: ec2.SecurityGroup;
@@ -63,6 +65,21 @@ export class DataStack extends cdk.Stack {
       backupRetention: cdk.Duration.days(7),
       deletionProtection: true,
       removalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+    });
+
+    // Credentials for the read-only DB role used by MCP tooling. Auto-generated
+    // password so it's never written in code. The role itself is created by
+    // scripts/db/create-readonly-role.sql (run via scripts/db/run-sql.sh).
+    this.readonlyDbSecret = new secretsmanager.Secret(this, 'ReadonlyDbSecret', {
+      secretName: `${projectName}/rds/readonly`,
+      description: 'laguna_readonly PostgreSQL credentials — SELECT-only access for MCP',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: 'laguna_readonly' }),
+        generateStringKey: 'password',
+        excludePunctuation: true, // psql-safe, no quoting issues
+        passwordLength: 32,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     // --- S3 + CloudFront ---
