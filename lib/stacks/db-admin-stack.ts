@@ -103,6 +103,17 @@ export class DbAdminStack extends cdk.Stack {
           ),
           'DB_PASSWORD',
         ),
+        // Same pattern for microbiome: create-microbiome-role.sql reads
+        // MICROBIOME_DB_PASSWORD to set the microbiome_app role's password straight
+        // from the secret — never lands in a file, the CLI, or CloudTrail.
+        MICROBIOME_DB_PASSWORD: ecs.Secret.fromSecretsManager(
+          secretsmanager.Secret.fromSecretNameV2(
+            this,
+            'MlAppSecret',
+            `${projectName}/microbiome-lab/app`,
+          ),
+          'DB_PASSWORD',
+        ),
       },
       // Harmless default (a connectivity check); run-sql.sh overrides this.
       command: ['psql', '-c', 'SELECT 1'],

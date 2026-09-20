@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { Match } from 'aws-cdk-lib/assertions';
 import { synthServices } from './support/harness';
@@ -9,13 +10,19 @@ import { synthServices } from './support/harness';
 describe('ServicesStack — laguna', () => {
   const { template } = synthServices();
 
-  test('runs a single ECS service on FARGATE_SPOT (cost invariant)', () => {
-    template.resourceCountIs('AWS::ECS::Service', 1);
-    template.hasResourceProperties('AWS::ECS::Service', {
-      CapacityProviderStrategy: Match.arrayWith([
-        Match.objectLike({ CapacityProvider: 'FARGATE_SPOT', Weight: 1 }),
-      ]),
-    });
+  test('runs 4 ECS services, all on FARGATE_SPOT (cost invariant)', () => {
+    // laguna + the three microbiome services (api, worker, ui). Every service
+    // must be on Spot — the whole point of this app is cost-optimized infra.
+    template.resourceCountIs('AWS::ECS::Service', 4);
+    const services = template.findResources('AWS::ECS::Service');
+    for (const [id, svc] of Object.entries(services)) {
+      const strategy = (svc as any).Properties.CapacityProviderStrategy;
+      assert.ok(
+        Array.isArray(strategy) &&
+          strategy.some((s: any) => s.CapacityProvider === 'FARGATE_SPOT'),
+        `${id} must run on FARGATE_SPOT`,
+      );
+    }
   });
 
   test('deployment circuit breaker rolls back a bad boot', () => {
@@ -170,5 +177,140 @@ describe('ServicesStack — laguna', () => {
     template.hasResourceProperties('AWS::ServiceDiscovery::Service', {
       Name: 'laguna',
     });
+  });
+});
+
+// microbiome-lab: api + worker (SQS between them) + ui. These tests pin the
+// per-service invariants the plan calls out — the discriminators that a refactor
+// could silently break (worker has no public tunnel, api uses the task role for
+// SQS, least-privilege queue grants, DB creds always injected as secrets).
+describe('ServicesStack — microbiome-lab', () => {
+  const { template } = synthServices();
+
+  // Every service's `app` container carries SERVICE_NAME (injected by the
+  // EcsService construct), so we can locate a task def by service without relying
+  // on the synthesized logical id.
+  const taskDefs = template.findResources('AWS::ECS::TaskDefinition');
+  function byService(name: string) {
+    for (const def of Object.values(taskDefs)) {
+      const containers = (def as any).Properties.ContainerDefinitions as any[];
+      const app = containers.find((c) => c.Name === 'app');
+      const svc = app?.Environment?.find(
+        (e: any) => e.Name === 'SERVICE_NAME',
+      )?.Value;
+      if (svc === name) return { containers, app };
+    }
+    throw new Error(`no task def found for service ${name}`);
+  }
+  const appEnv = (app: any) =>
+    Object.fromEntries(
+      (app.Environment as any[]).map((e) => [e.Name, e.Value]),
+    );
+
+  test('api + ui ship a cloudflared tunnel sidecar; the worker does not', () => {
+    const hasCloudflared = (svc: string) =>
+      byService(svc).containers.some((c) => c.Name === 'cloudflared');
+    assert.ok(hasCloudflared('microbiome-api'), 'api needs a public tunnel');
+    assert.ok(hasCloudflared('microbiome-ui'), 'ui needs a public tunnel');
+    assert.equal(
+      hasCloudflared('microbiome-worker'),
+      false,
+      'worker is SQS-only — no public ingress, no sidecar',
+    );
+  });
+
+  test('worker listens on 8081 and health-checks /api/health; api listens on 8080', () => {
+    const worker = byService('microbiome-worker').app;
+    assert.equal(worker.PortMappings[0].ContainerPort, 8081);
+    assert.match(worker.HealthCheck.Command.join(' '), /localhost:8081\/api\/health/);
+
+    const api = byService('microbiome-api').app;
+    assert.equal(api.PortMappings[0].ContainerPort, 8080);
+    assert.match(api.HealthCheck.Command.join(' '), /localhost:8080\/api\/health/);
+  });
+
+  test('api env: DB_SSLMODE=require, SQS_QUEUE_URL set, and NO static AWS creds', () => {
+    const env = appEnv(byService('microbiome-api').app);
+    assert.equal(env.DB_SSLMODE, 'require');
+    assert.equal(env.DB_NAME, 'microbiome_lab');
+    assert.ok('SQS_QUEUE_URL' in env, 'api must know the queue URL');
+    // Leaving AWS_ACCESS_KEY_ID unset makes the SDK fall back to the task role —
+    // static creds in env would defeat least-privilege and never rotate.
+    assert.ok(!('AWS_ACCESS_KEY_ID' in env), 'must use the task role, not static keys');
+    assert.ok(!('AWS_ENDPOINT_URL' in env), 'AWS_ENDPOINT_URL is LocalStack-only');
+  });
+
+  test('ui reaches the api internally over Cloud Map (no DB, no queue)', () => {
+    const env = appEnv(byService('microbiome-ui').app);
+    assert.match(env.API_BASE_URL, /microbiome-api\.bryan-test\.local:8080/);
+    assert.ok(!('SQS_QUEUE_URL' in env), 'ui does not touch the queue');
+    assert.ok(!('DB_HOST' in env), 'ui does not touch the DB');
+  });
+
+  test('api task role may SendMessage; worker may Receive/Delete on the samples queue', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({ Action: Match.arrayWith(['sqs:SendMessage']) }),
+        ]),
+      },
+    });
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['sqs:ReceiveMessage', 'sqs:DeleteMessage']),
+          }),
+        ]),
+      },
+    });
+  });
+
+  test('DB creds are injected as secrets (never plaintext) on api + worker', () => {
+    const apiSecrets = byService('microbiome-api').app.Secrets.map((s: any) => s.Name);
+    const workerSecrets = byService('microbiome-worker').app.Secrets.map(
+      (s: any) => s.Name,
+    );
+    assert.ok(apiSecrets.includes('DB_PASSWORD'));
+    assert.ok(workerSecrets.includes('DB_PASSWORD'));
+    // Worker serves no ingest route, so it must NOT hold the ingest token.
+    assert.ok(apiSecrets.includes('INGEST_API_TOKEN'), 'api needs the ingest token');
+    assert.ok(
+      !workerSecrets.includes('INGEST_API_TOKEN'),
+      'worker must not hold the ingest token',
+    );
+  });
+
+  test('Postgres ingress (5432) is opened for api + worker, but not ui', () => {
+    const ingress = template.findResources('AWS::EC2::SecurityGroupIngress');
+    const descriptions = Object.values(ingress)
+      .filter((r: any) => r.Properties.FromPort === 5432)
+      .map((r: any) => r.Properties.Description as string);
+    assert.ok(descriptions.some((d) => d?.includes('microbiome-api')));
+    assert.ok(descriptions.some((d) => d?.includes('microbiome-worker')));
+    assert.ok(
+      !descriptions.some((d) => d?.includes('microbiome-ui')),
+      'ui has no DB access',
+    );
+  });
+
+  test('samples queue has a DLQ wired with maxReceiveCount 5', () => {
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      QueueName: 'microbiome-lab-samples',
+      RedrivePolicy: Match.objectLike({ maxReceiveCount: 5 }),
+    });
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      QueueName: 'microbiome-lab-samples-dlq',
+    });
+  });
+
+  test('microbiome services carry no static AWS credentials as secrets', () => {
+    // Belt-and-suspenders on the task-role posture: neither key should ever be a
+    // secret ref either (which would also short-circuit the SDK's role lookup).
+    for (const svc of ['microbiome-api', 'microbiome-worker']) {
+      const names = byService(svc).app.Secrets.map((s: any) => s.Name);
+      assert.ok(!names.includes('AWS_ACCESS_KEY_ID'));
+      assert.ok(!names.includes('AWS_SECRET_ACCESS_KEY'));
+    }
   });
 });
