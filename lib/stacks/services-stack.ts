@@ -7,6 +7,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { EcsService } from '../constructs/ecs-service';
 import { EcrStack } from './ecr-stack';
@@ -33,6 +34,9 @@ export interface ServicesStackProps extends cdk.StackProps {
     laguna: string;
     cloudflared: string;
     alloy: string;
+    microbiomeApi: string;
+    microbiomeWorker: string;
+    microbiomeUi: string;
   };
 }
 
@@ -233,5 +237,183 @@ export class ServicesStack extends cdk.Stack {
       // NB: SG rule descriptions reject '>' — keep it to the allowed charset.
       `${laguna.node.id} to postgres`,
     );
+
+    // --- microbiome-lab (api + worker + ui) ---
+    // A shared cloudflared image for the public services. Pinned tag from
+    // image-tags.json so a spot reclaim never re-pulls a new cloudflared.
+    const cloudflaredImage = ecs.ContainerImage.fromRegistry(
+      `cloudflare/cloudflared:${imageTags.cloudflared}`,
+    );
+
+    // Two JSON secrets, imported by name so rotating values never diffs the stack.
+    // app:   DB app-role creds (microbiome_app) + INGEST_API_TOKEN.
+    // infra: API_CF_TUNNEL_TOKEN + UI_CF_TUNNEL_TOKEN.
+    // Both are created out-of-band (laguna convention); every key referenced below
+    // MUST exist in them or the task fails to start:
+    //   aws secretsmanager create-secret --name <projectName>/microbiome-lab/app ...
+    //   aws secretsmanager create-secret --name <projectName>/microbiome-lab/infra ...
+    const mlAppSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'MlAppSecret',
+      `${projectName}/microbiome-lab/app`,
+    );
+    const mlInfraSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'MlInfraSecret',
+      `${projectName}/microbiome-lab/infra`,
+    );
+
+    // Boot-test escape hatch, mirroring lagunaTunnel: bring the tasks up VPC-only
+    // (no cloudflared sidecar) before the Cloudflare side is wired, with:
+    //   cdk deploy bryan-dev-services -c microbiomeTunnel=off
+    const microbiomeTunnelEnabled =
+      this.node.tryGetContext('microbiomeTunnel') !== 'off';
+    const apiTunnelSecret = microbiomeTunnelEnabled
+      ? ecs.Secret.fromSecretsManager(mlInfraSecret, 'API_CF_TUNNEL_TOKEN')
+      : undefined;
+    const uiTunnelSecret = microbiomeTunnelEnabled
+      ? ecs.Secret.fromSecretsManager(mlInfraSecret, 'UI_CF_TUNNEL_TOKEN')
+      : undefined;
+
+    // SQS: api SendMessage -> worker ReceiveMessage. The queue carries only
+    // {sample_id}; the DB is the source of truth. Not in the Guardrails stateful
+    // set (S3/RDS/ECR/EFS) — transient infra, so the default RemovalPolicy is fine.
+    // maxReceiveCount 5 / visibility 30s mirror the worker's defaults and the
+    // LocalStack init the app already uses.
+    const samplesDlq = new sqs.Queue(this, 'SamplesDlq', {
+      queueName: 'microbiome-lab-samples-dlq',
+      retentionPeriod: cdk.Duration.days(14),
+    });
+    const samplesQueue = new sqs.Queue(this, 'SamplesQueue', {
+      queueName: 'microbiome-lab-samples',
+      visibilityTimeout: cdk.Duration.seconds(30),
+      deadLetterQueue: { queue: samplesDlq, maxReceiveCount: 5 },
+    });
+
+    // Shared env for api + worker (DB + SQS + region). We deliberately set NEITHER
+    // AWS_ACCESS_KEY_ID/SECRET (so the SDK uses the task role) NOR AWS_ENDPOINT_URL
+    // (that's LocalStack-only; unset => real SQS).
+    const microbiomeDataEnv: Record<string, string> = {
+      DB_HOST: dbAddress,
+      DB_PORT: dbPort,
+      DB_NAME: 'microbiome_lab',
+      // RDS enforces rds.force_ssl=1, so plaintext is refused.
+      DB_SSLMODE: 'require',
+      SQS_QUEUE_URL: samplesQueue.queueUrl,
+      AWS_REGION: this.region,
+      PRACTITIONER_EMAIL: 'practitioner@vitract.example',
+      LOG_LEVEL: 'info',
+      // No alloy sidecar for the demo (plan default off); app ignores unknown env.
+      OBSERVABILITY_ENABLED: 'false',
+    };
+
+    // API — public (cloudflared). Persists `pending` + SendMessage {sample_id}.
+    const microbiomeApi = new EcsService(this, 'MicrobiomeApi', {
+      vpc,
+      cluster,
+      namespace,
+      serviceName: 'microbiome-api',
+      containerImage: ecs.ContainerImage.fromEcrRepository(
+        ecr.microbiomeApi,
+        imageTags.microbiomeApi,
+      ),
+      containerPort: 8080,
+      cpu: 256,
+      memory: 512, // -> 1024 automatically (tunnel sidecar present)
+      desiredCount: Number(
+        this.node.tryGetContext('microbiomeApiDesiredCount') ?? 1,
+      ),
+      healthCheckPath: '/api/health',
+      cloudflareTunnelTokenSecret: apiTunnelSecret,
+      cloudflaredImage,
+      environment: {
+        ...microbiomeDataEnv,
+        API_PORT: '8080',
+        INGEST_RATE_LIMIT_PER_SEC: '20',
+        INGEST_RATE_LIMIT_BURST: '40',
+      },
+      secrets: {
+        // App-scoped role microbiome_app (create-microbiome-role.sql), NOT the RDS
+        // master — a leak is contained to the microbiome_lab database.
+        DB_USER: ecs.Secret.fromSecretsManager(mlAppSecret, 'DB_USER'),
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(mlAppSecret, 'DB_PASSWORD'),
+        // Required at api startup; the worker serves no ingest route so never gets it.
+        INGEST_API_TOKEN: ecs.Secret.fromSecretsManager(mlAppSecret, 'INGEST_API_TOKEN'),
+      },
+    });
+    // Least-privilege SQS — producer only.
+    samplesQueue.grantSendMessages(microbiomeApi.taskDefinition.taskRole);
+    dbSgLocal.addIngressRule(
+      microbiomeApi.securityGroup,
+      ec2.Port.tcp(5432),
+      'microbiome-api to postgres',
+    );
+
+    // WORKER — private (SQS-only, no tunnel). Health server on 8081.
+    const microbiomeWorker = new EcsService(this, 'MicrobiomeWorker', {
+      vpc,
+      cluster,
+      namespace,
+      serviceName: 'microbiome-worker',
+      containerImage: ecs.ContainerImage.fromEcrRepository(
+        ecr.microbiomeWorker,
+        imageTags.microbiomeWorker,
+      ),
+      containerPort: 8081,
+      cpu: 256,
+      memory: 512, // stays 512 — no sidecar
+      desiredCount: Number(
+        this.node.tryGetContext('microbiomeWorkerDesiredCount') ?? 1,
+      ),
+      healthCheckPath: '/api/health',
+      // No tunnel secret -> the construct adds no cloudflared sidecar. cloudflaredImage
+      // is a required prop but goes unreferenced without a token.
+      cloudflaredImage,
+      environment: {
+        ...microbiomeDataEnv,
+        WORKER_HEALTH_PORT: '8081',
+        WORKER_MAX_MESSAGES: '10',
+        WORKER_WAIT_TIME_SECONDS: '10',
+        WORKER_VISIBILITY_TIMEOUT_SECONDS: '30',
+      },
+      secrets: {
+        DB_USER: ecs.Secret.fromSecretsManager(mlAppSecret, 'DB_USER'),
+        DB_PASSWORD: ecs.Secret.fromSecretsManager(mlAppSecret, 'DB_PASSWORD'),
+        // No INGEST_API_TOKEN — the worker serves no ingest route.
+      },
+    });
+    // Least-privilege SQS — consumer only.
+    samplesQueue.grantConsumeMessages(microbiomeWorker.taskDefinition.taskRole);
+    dbSgLocal.addIngressRule(
+      microbiomeWorker.securityGroup,
+      ec2.Port.tcp(5432),
+      'microbiome-worker to postgres',
+    );
+
+    // UI — public (cloudflared). No DB, no SQS. Fetches the api server-side over
+    // Cloud Map (never leaves the VPC); the public hostname is only for the browser.
+    new EcsService(this, 'MicrobiomeUi', {
+      vpc,
+      cluster,
+      namespace,
+      serviceName: 'microbiome-ui',
+      containerImage: ecs.ContainerImage.fromEcrRepository(
+        ecr.microbiomeUi,
+        imageTags.microbiomeUi,
+      ),
+      containerPort: 3000,
+      cpu: 256,
+      memory: 512, // -> 1024 (tunnel present)
+      desiredCount: Number(
+        this.node.tryGetContext('microbiomeUiDesiredCount') ?? 1,
+      ),
+      healthCheckPath: '/',
+      cloudflareTunnelTokenSecret: uiTunnelSecret,
+      cloudflaredImage,
+      environment: {
+        // Server-side fetch target; internal Cloud Map DNS for the api service.
+        API_BASE_URL: `http://microbiome-api.${projectName}.local:8080`,
+      },
+    });
   }
 }

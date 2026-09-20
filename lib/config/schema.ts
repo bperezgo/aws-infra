@@ -36,6 +36,17 @@ export const ImageTagsSchema = z.object({
   // image we don't control, so loose like cloudflared — just a pinned, non-empty
   // tag (e.g. "v1.18.1") so a spot reclaim / restart never re-pulls a new "latest".
   alloy: z.string().min(1, 'must not be empty (e.g. "v1.18.1") — avoid "latest"'),
+  // microbiome-lab images (api + worker + ui) — OUR images, built from the
+  // bperezgo/micobiome-lab repo, so strict release-tag discipline like laguna.
+  microbiomeApi: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
+  microbiomeWorker: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
+  microbiomeUi: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
 });
 
 export type ImageTags = z.infer<typeof ImageTagsSchema>;

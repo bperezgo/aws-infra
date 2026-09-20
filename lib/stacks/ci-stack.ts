@@ -27,6 +27,7 @@ export interface CiStackProps extends cdk.StackProps {
  */
 export class CiStack extends cdk.Stack {
   public readonly lagunaPushRole: iam.Role;
+  public readonly microbiomePushRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: CiStackProps) {
     super(scope, id, props);
@@ -44,12 +45,36 @@ export class CiStack extends cdk.Stack {
       provider,
       githubOwner,
       githubRepo: 'laguna-escondida-backend',
-      repositoryArn: ecr.laguna.repositoryArn,
+      repositoryArns: [ecr.laguna.repositoryArn],
     });
 
     new cdk.CfnOutput(this, 'LagunaPushRoleArn', {
       value: this.lagunaPushRole.roleArn,
       description: 'Paste into laguna-escondida-backend repo as AWS_ROLE_ARN var',
+    });
+
+    // microbiome-lab: ONE role, scoped to the three microbiome ECR repos, that the
+    // repo's release.yml assumes to push api/worker/ui in one matrix build.
+    // ⚠ githubRepo is the EXACT slug incl. the typo (missing 2nd "r"): the app repo
+    // remote is git@github.com:bperezgo/micobiome-lab.git. The trust `sub` becomes
+    // `repo:bperezgo/micobiome-lab:ref:refs/tags/v*` — rename the GitHub repo and
+    // this stops trusting it; update githubRepo in the same commit if you do.
+    this.microbiomePushRole = this.makePushRole({
+      id: 'MicrobiomePushRole',
+      roleName: 'gha-microbiome-ecr-push',
+      provider,
+      githubOwner,
+      githubRepo: 'micobiome-lab',
+      repositoryArns: [
+        ecr.microbiomeApi.repositoryArn,
+        ecr.microbiomeWorker.repositoryArn,
+        ecr.microbiomeUi.repositoryArn,
+      ],
+    });
+
+    new cdk.CfnOutput(this, 'MicrobiomePushRoleArn', {
+      value: this.microbiomePushRole.roleArn,
+      description: 'Set as AWS_ROLE_ARN repo variable in bperezgo/micobiome-lab',
     });
   }
 
@@ -59,9 +84,9 @@ export class CiStack extends cdk.Stack {
     provider: iam.IOpenIdConnectProvider;
     githubOwner: string;
     githubRepo: string;
-    repositoryArn: string;
+    repositoryArns: string[];
   }): iam.Role {
-    const { id, roleName, provider, githubOwner, githubRepo, repositoryArn } = params;
+    const { id, roleName, provider, githubOwner, githubRepo, repositoryArns } = params;
 
     const role = new iam.Role(this, id, {
       roleName,
@@ -87,7 +112,7 @@ export class CiStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Push/pull scoped to this repo only.
+    // Push/pull scoped to these repos only.
     role.addToPolicy(new iam.PolicyStatement({
       actions: [
         'ecr:BatchCheckLayerAvailability',
@@ -97,7 +122,7 @@ export class CiStack extends cdk.Stack {
         'ecr:PutImage',
         'ecr:UploadLayerPart',
       ],
-      resources: [repositoryArn],
+      resources: repositoryArns,
     }));
 
     return role;

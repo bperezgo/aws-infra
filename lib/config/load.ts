@@ -65,5 +65,8 @@ export function loadImageTags(repoRoot: string): ImageTags {
     laguna: 'bump to the release tag pushed to ECR (e.g. "v0.1.0")',
     cloudflared: 'pin to a cloudflared release tag (e.g. "2026.7.1") — not "latest"',
     alloy: 'pin to a grafana/alloy release tag (e.g. "v1.18.1") — not "latest"',
+    microbiomeApi: 'bump to the release tag pushed to microbiome-lab-api (e.g. "v0.1.0")',
+    microbiomeWorker: 'bump to the release tag pushed to microbiome-lab-worker (e.g. "v0.1.0")',
+    microbiomeUi: 'bump to the release tag pushed to microbiome-lab-ui (e.g. "v0.1.0")',
   });
 }

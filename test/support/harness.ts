@@ -4,6 +4,7 @@ import { NetworkStack } from '../../lib/stacks/network-stack';
 import { DataStack } from '../../lib/stacks/data-stack';
 import { EcrStack } from '../../lib/stacks/ecr-stack';
 import { ServicesStack } from '../../lib/stacks/services-stack';
+import { CiStack } from '../../lib/stacks/ci-stack';
 
 // Fixed, valid-looking values so tests are deterministic and never hit AWS.
 // projectName must satisfy lib/config/schema.ts (lowercase, letter-first, 3-31).
@@ -69,7 +70,30 @@ export function synthServices(): { stack: ServicesStack; template: Template } {
     dbSecurityGroup: data.dbSecurityGroup,
     ecr,
     assetsBucket: data.assetsBucket,
-    imageTags: { laguna: 'v1.1.9', cloudflared: '2026.7.1', alloy: 'v1.18.1' },
+    imageTags: {
+      laguna: 'v1.1.9',
+      cloudflared: '2026.7.1',
+      alloy: 'v1.18.1',
+      microbiomeApi: 'v0.1.0',
+      microbiomeWorker: 'v0.1.0',
+      microbiomeUi: 'v0.1.0',
+    },
+  });
+  return { stack, template: Template.fromStack(stack) };
+}
+
+export function synthCi(): { stack: CiStack; template: Template } {
+  const app = new cdk.App();
+  const ecr = new EcrStack(app, `${TEST_PROJECT}-ecr`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+  });
+  const stack = new CiStack(app, `${TEST_PROJECT}-ci`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+    ecr,
+    // Matches cdk.json context; the OIDC trust `sub` is scoped to this owner.
+    githubOwner: 'bperezgo',
   });
   return { stack, template: Template.fromStack(stack) };
 }
