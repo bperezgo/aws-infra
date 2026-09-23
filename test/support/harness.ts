@@ -42,8 +42,15 @@ export function synthData(): { stack: DataStack; template: Template } {
   return { stack, template: Template.fromStack(stack) };
 }
 
-export function synthServices(): { stack: ServicesStack; template: Template } {
-  const app = new cdk.App();
+/**
+ * `context` mirrors `cdk deploy -c key=value`, so tests can exercise the
+ * documented escape hatches (e.g. `{ lagunaAlloy: 'off' }`) instead of only the
+ * happy path. Defaults to none, so existing callers are unchanged.
+ */
+export function synthServices(
+  context: Record<string, unknown> = {},
+): { stack: ServicesStack; template: Template } {
+  const app = new cdk.App({ context });
   // Wire the full dependency graph exactly like bin/app.ts does. Secrets are
   // imported by name (fromSecretNameV2) so nothing here needs AWS access.
   const network = new NetworkStack(app, `${TEST_PROJECT}-network`, {

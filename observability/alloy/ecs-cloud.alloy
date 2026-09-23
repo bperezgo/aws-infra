@@ -1,54 +1,112 @@
-// ECS cloud-task Alloy config (Phase 1) — see docs/observability-strategy.md
-// and docs/observability-backend-changes.md.
+// ECS cloud-task Alloy config (Phase 1) — see docs/observability-strategy.md,
+// docs/observability-backend-changes.md and docs/cloud-alloy-template.md.
 //
 // Runs as a NON-ESSENTIAL sidecar in the laguna cloud task. All containers in a
 // Fargate task share one network namespace, so it talks to the app over
-// 127.0.0.1 (never exposed to the task ENI). It:
-//   - receives OTLP logs + traces from the app on 127.0.0.1:4317/4318
-//   - scrapes the app's Prometheus /metrics on 127.0.0.1:9090
-// and forwards all three to Grafana Cloud's OTLP gateway. Credentials are read
-// from env (injected from Secrets Manager on the sidecar) — the app never holds
-// them. This config is written to a file by the container entrypoint at boot;
-// it is NOT validated at `cdk synth`, so verify changes at deploy time.
+// 127.0.0.1 (never exposed to the task ENI). It carries TWO independent
+// pipelines:
+//
+//   1. "app"        — this service's own telemetry: OTLP logs + traces from the
+//                     app on 127.0.0.1:4317 (gRPC), plus a Prometheus scrape of
+//                     127.0.0.1:9090/metrics.
+//   2. "edge_relay" — telemetry RELAYED from edge boxes (the Windows POS nodes).
+//                     The edge posts to the backend, which authenticates the
+//                     node, stamps tenant.id / organization.id, and forwards the
+//                     export here over OTLP/HTTP on 127.0.0.1:4319.
+//
+// They are kept separate ON PURPOSE. A shared pipeline would apply this
+// service's identity to edge data, so a log from a restaurant's box would look
+// like it came from the cloud task; and a shared exporter means one queue, so an
+// edge burst could evict the cloud service's own telemetry. Nothing below
+// sets or re-derives service.name, service.instance.id, node.id,
+// organization.id or tenant.id — the edge app stamps the first set and the
+// backend stamps the tenant context. If a resource-detection processor is ever
+// added, wire it into the "app" pipeline ONLY.
+//
+// Credentials are read from env (injected from Secrets Manager on the sidecar) —
+// the app never holds them. This config is written to a file by the container
+// entrypoint at boot; it is NOT validated at `cdk synth`, so verify changes with
+//   docker run --rm -v "$PWD/observability/alloy:/cfg" grafana/alloy:<tag> \
+//     fmt /cfg/ecs-cloud.alloy
+// before deploying.
+//
+// MEMORY: the sidecar is hard-capped at 256 MiB (lib/constructs/ecs-service.ts)
+// and is non-essential, so an OOM kill removes it SILENTLY and every subsequent
+// edge forward gets connection-refused. Every buffer below is therefore bounded,
+// and a memory limiter refuses new data before the cap is reached: Alloy answers
+// 503, the backend returns 502, and the edge holds the data in its own disk
+// buffer — which is exactly where it should back up.
 
 logging {
   level  = "warn"
   format = "logfmt"
 }
 
-// ── Grafana Cloud exporter (OTLP gateway, all three signals) ──────────────────
+// ── Grafana Cloud auth, shared by both exporters ──────────────────────────────
 // Basic auth: username = OTLP instance ID, password = access-policy token.
 otelcol.auth.basic "grafana_cloud" {
   username = sys.env("GRAFANA_CLOUD_OTLP_USER")
   password = sys.env("GRAFANA_CLOUD_OTLP_TOKEN")
 }
 
+// ── Pipeline 1: this service's own telemetry ──────────────────────────────────
+
 otelcol.exporter.otlphttp "grafana_cloud" {
   client {
     endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
     auth     = otelcol.auth.basic.grafana_cloud.handler
   }
+
+  // Deliberately small: this queue shares 256 MiB with the relay queue below.
+  sending_queue {
+    enabled    = true
+    queue_size = 50
+  }
+
+  // max_elapsed_time = "0s" means "retry forever". The default (~5m) DROPS data
+  // after five minutes, which would defeat the point of queueing here at all.
+  // The bounded queue above is what keeps "forever" from meaning "unbounded".
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "5s"
+    max_interval     = "30s"
+    max_elapsed_time = "0s"
+  }
 }
 
-// ── Logs + traces: received from the app over OTLP, forwarded as-is ───────────
-otelcol.receiver.otlp "app" {
-  grpc {
-    endpoint = "127.0.0.1:4317"
-  }
-  http {
-    endpoint = "127.0.0.1:4318"
-  }
+// Refuses data (503 to the receiver) rather than letting the process grow into
+// the container's hard cap. Limits are process-wide, so this instance and the
+// relay's observe the same memory; each just applies backpressure to its own
+// pipeline.
+otelcol.processor.memory_limiter "app" {
+  check_interval = "1s"
+  limit          = "160MiB"
 
   output {
-    logs   = [otelcol.exporter.otlphttp.grafana_cloud.input]
-    traces = [otelcol.exporter.otlphttp.grafana_cloud.input]
-    // App metrics arrive via the Prometheus scrape below, not OTLP, but wiring
-    // this keeps the path open if the app later exports OTLP metrics too.
+    logs    = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
     metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
   }
 }
 
-// ── Metrics: scrape the app's Prometheus endpoint, convert to OTLP ────────────
+// gRPC only. An OTLP/HTTP listener here would be a second, unused door on :4318
+// that a mistyped TELEMETRY_FORWARD_URL would silently accept — sending edge
+// telemetry through THIS pipeline, wearing this service's identity, looking like
+// it worked. The app exports over gRPC (OTEL_EXPORTER_OTLP_ENDPOINT).
+otelcol.receiver.otlp "app" {
+  grpc {
+    endpoint = "127.0.0.1:4317"
+  }
+
+  output {
+    logs   = [otelcol.processor.memory_limiter.app.input]
+    traces = [otelcol.processor.memory_limiter.app.input]
+    // App metrics arrive via the Prometheus scrape below, not OTLP, but wiring
+    // this keeps the path open if the app later exports OTLP metrics too.
+    metrics = [otelcol.processor.memory_limiter.app.input]
+  }
+}
+
 prometheus.scrape "app" {
   targets         = [{ "__address__" = "127.0.0.1:9090" }]
   metrics_path    = "/metrics"
@@ -58,6 +116,77 @@ prometheus.scrape "app" {
 
 otelcol.receiver.prometheus "app" {
   output {
-    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    metrics = [otelcol.processor.memory_limiter.app.input]
+  }
+}
+
+// ── Pipeline 2: telemetry relayed from the edge boxes ─────────────────────────
+
+// Its own exporter instance — same credentials, SEPARATE queue and backoff, so a
+// burst of edge exports cannot starve the cloud service's own telemetry.
+otelcol.exporter.otlphttp "edge_relay" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+
+  // Absorbing a Grafana Cloud outage here, instead of on the edge boxes' bounded
+  // disk buffers, is the reason this relay exists. The queue is small because
+  // the container is capped at 256 MiB: it smooths minutes, not hours. Once it
+  // fills, backpressure reaches the edge, which buffers to disk and resends.
+  sending_queue {
+    enabled    = true
+    queue_size = 100
+  }
+
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "5s"
+    max_interval     = "30s"
+    max_elapsed_time = "0s"
+  }
+}
+
+// A second batch (the edge already batches) smooths bursts from many nodes
+// arriving at once. Sized small to stay inside the memory cap.
+otelcol.processor.batch "edge_relay" {
+  send_batch_size     = 512
+  send_batch_max_size = 1024
+  timeout             = "5s"
+
+  output {
+    logs    = [otelcol.exporter.otlphttp.edge_relay.input]
+    traces  = [otelcol.exporter.otlphttp.edge_relay.input]
+    metrics = [otelcol.exporter.otlphttp.edge_relay.input]
+  }
+}
+
+otelcol.processor.memory_limiter "edge_relay" {
+  check_interval = "1s"
+  limit          = "160MiB"
+
+  output {
+    logs    = [otelcol.processor.batch.edge_relay.input]
+    traces  = [otelcol.processor.batch.edge_relay.input]
+    metrics = [otelcol.processor.batch.edge_relay.input]
+  }
+}
+
+// Loopback-bound, HTTP only, on a port distinct from the app's receiver. The
+// task runs in a PUBLIC subnet with a public IP, so binding to 127.0.0.1 is what
+// keeps this unauthenticated port off the internet — never 0.0.0.0. The backend
+// posts gzipped protobuf to the standard /v1/{logs,traces,metrics} paths; it
+// attaches no credential, since the hop never leaves the task.
+otelcol.receiver.otlp "edge_relay" {
+  http {
+    endpoint = "127.0.0.1:4319"
+    // Bounds the memory a single export can cost us (default is 20 MiB).
+    max_request_body_size = "4MiB"
+  }
+
+  output {
+    logs    = [otelcol.processor.memory_limiter.edge_relay.input]
+    traces  = [otelcol.processor.memory_limiter.edge_relay.input]
+    metrics = [otelcol.processor.memory_limiter.edge_relay.input]
   }
 }

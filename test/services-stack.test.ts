@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { Match } from 'aws-cdk-lib/assertions';
 import { synthServices } from './support/harness';
@@ -170,5 +171,129 @@ describe('ServicesStack — laguna', () => {
     template.hasResourceProperties('AWS::ServiceDiscovery::Service', {
       Name: 'laguna',
     });
+  });
+});
+
+
+// The relayed-edge-telemetry path (docs/cloud-alloy-template.md): edge boxes POST
+// to the backend, which stamps tenant identity and forwards the export to a
+// DEDICATED Alloy receiver over task loopback. The invariants below are the ones
+// that are expensive to discover in production — a relay port reachable from the
+// ENI, edge telemetry silently entering the cloud service's own pipeline (and so
+// wearing its labels), or an unbounded queue OOM-killing a sidecar that is
+// non-essential and therefore dies quietly.
+describe('ServicesStack — edge telemetry relay', () => {
+  const { template } = synthServices();
+
+  // The Alloy config is a plain (untokenized) string on the sidecar's
+  // ALLOY_CONFIG env var, so it can be asserted directly. That matters for the
+  // NEGATIVE checks below: `Match` can assert a value is present, but not that a
+  // dangerous one is absent.
+  const alloyConfig = (): string => {
+    const taskDef = Object.values(
+      template.findResources('AWS::ECS::TaskDefinition'),
+    )[0] as any;
+    const alloy = taskDef.Properties.ContainerDefinitions.find(
+      (c: any) => c.Name === 'alloy',
+    );
+    assert.ok(alloy, 'no alloy container in the task definition');
+    const cfg = alloy.Environment.find((e: any) => e.Name === 'ALLOY_CONFIG');
+    assert.ok(cfg, 'alloy container has no ALLOY_CONFIG env var');
+    return cfg.Value as string;
+  };
+
+  // The negative assertions below ("no 0.0.0.0", "no 4318") are about what Alloy
+  // is CONFIGURED to do, so the prose has to go first — the comments in that file
+  // name both strings precisely to explain why they're absent. `//` is only
+  // stripped at start-of-line or after whitespace, so a `https://` in a value
+  // survives.
+  const alloyDirectives = (): string =>
+    alloyConfig()
+      .split('\n')
+      .map((line) => line.replace(/(^|\s)\/\/.*$/, ''))
+      .join('\n');
+
+  const appEnv = (t = template): Array<{ Name: string; Value: string }> => {
+    const taskDef = Object.values(
+      t.findResources('AWS::ECS::TaskDefinition'),
+    )[0] as any;
+    return taskDef.Properties.ContainerDefinitions.find(
+      (c: any) => c.Name === 'app',
+    ).Environment;
+  };
+
+  test('app forwards relayed edge telemetry to the sidecar over loopback', () => {
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Name: 'app',
+          Environment: Match.arrayWith([
+            { Name: 'TELEMETRY_FORWARD_URL', Value: 'http://127.0.0.1:4319' },
+          ]),
+        }),
+      ]),
+    });
+  });
+
+  test('forward URL is unset when the alloy sidecar is switched off', () => {
+    // `cdk deploy -c lagunaAlloy=off` drops the sidecar. If the app still
+    // advertised its ingest routes it would forward into a void: every edge POST
+    // 502s and the boxes spin on retry. The env var must follow the sidecar.
+    const { template: noAlloy } = synthServices({ lagunaAlloy: 'off' });
+    const names = appEnv(noAlloy).map((e) => e.Name);
+    assert.ok(
+      !names.includes('TELEMETRY_FORWARD_URL'),
+      'TELEMETRY_FORWARD_URL must not be set when alloy is off',
+    );
+  });
+
+  test('relay receiver binds loopback only, never the task ENI', () => {
+    // The task runs in a PUBLIC subnet with a public IP, so loopback binding is
+    // the only thing keeping the unauthenticated relay port off the internet.
+    const cfg = alloyDirectives();
+    assert.match(cfg, /127\.0\.0\.1:4319/);
+    assert.doesNotMatch(cfg, /0\.0\.0\.0/);
+  });
+
+  test('app OTLP receiver is gRPC-only, so 4318 cannot be mistaken for the relay', () => {
+    // The app exports over gRPC (:4317). A second, unused OTLP/HTTP door on :4318
+    // would accept a mistyped TELEMETRY_FORWARD_URL and route edge telemetry
+    // through the CLOUD pipeline — mislabelled, and it would look like it worked.
+    assert.doesNotMatch(alloyDirectives(), /4318/);
+  });
+
+  test('relay owns its exporter so an edge burst cannot evict app telemetry', () => {
+    // One exporter component means one queue and one backoff shared by both
+    // pipelines. Separate instances (sharing only the auth handler) keep an edge
+    // burst from starving the cloud service's own telemetry.
+    assert.match(alloyDirectives(), /otelcol\.exporter\.otlphttp "edge_relay"/);
+  });
+
+  test('queues are bounded and retry never gives up on a Grafana outage', () => {
+    // Absorbing an outage is the whole point of relaying through Alloy, and the
+    // exporter default (max_elapsed_time ~5m) drops data instead. "0s" = retry
+    // forever; the bounded queue is what stops that from growing without limit.
+    const cfg = alloyDirectives();
+    assert.match(cfg, /queue_size\s*=/);
+    assert.match(cfg, /max_elapsed_time\s*=\s*"0s"/);
+  });
+
+  test('alloy stays hard-capped at 256 MiB inside the 1024 MiB task', () => {
+    // Deliberate: no memory bump for the relay. The cap is what forces the
+    // bounded queue + memory limiter above, and keeps Alloy from starving the
+    // app. Revisit from real usage, not from a guess about node count.
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      Memory: '1024',
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({ Name: 'alloy', Memory: 256 }),
+      ]),
+    });
+  });
+
+  test('a memory limiter refuses data instead of letting the sidecar OOM', () => {
+    // Alloy is non-essential: an OOM kill removes it silently and every
+    // subsequent edge forward gets connection-refused. Refusing at the receiver
+    // pushes back to the edge (which has its own disk buffer) and stays alive.
+    assert.match(alloyDirectives(), /otelcol\.processor\.memory_limiter/);
   });
 });

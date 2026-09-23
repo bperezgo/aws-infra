@@ -191,6 +191,16 @@ export class ServicesStack extends cdk.Stack {
         // Prometheus /metrics listener the Alloy sidecar scrapes (separate port so
         // it's never exposed via the Cloudflare Tunnel).
         METRICS_PORT: '9090',
+        // Edge telemetry relay: the Windows POS boxes POST to the backend's
+        // /api/telemetry/v1/* routes, which authenticate the node, stamp tenant
+        // identity, and forward the export to Alloy's DEDICATED relay receiver
+        // over task loopback (see observability/alloy/ecs-cloud.alloy). Gated on
+        // the sidecar: with `-c lagunaAlloy=off` the backend must NOT register
+        // the ingest routes, or every edge POST forwards into a void, 502s, and
+        // the boxes spin on retry. Unsetting this is also the rollback switch.
+        ...(alloyEnabled
+          ? { TELEMETRY_FORWARD_URL: 'http://127.0.0.1:4319' }
+          : {}),
       },
       secrets: {
         // DB creds are the app-scoped role `laguna_app` (created by
