@@ -5,6 +5,8 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import { EcrStack } from './ecr-stack';
+import { MARKETING_DB, MARKETING_OWNER_ROLE } from './marketing-stack';
 
 export interface DbAdminStackProps extends cdk.StackProps {
   projectName: string;
@@ -12,6 +14,8 @@ export interface DbAdminStackProps extends cdk.StackProps {
   cluster: ecs.ICluster;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
+  ecr: EcrStack;
+  imageTags: { whatsappAgent: string };
 }
 
 /**
@@ -31,7 +35,7 @@ export class DbAdminStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: DbAdminStackProps) {
     super(scope, id, props);
 
-    const { projectName, vpc, cluster, database, dbSecurityGroup } = props;
+    const { projectName, vpc, cluster, database, dbSecurityGroup, ecr, imageTags } = props;
 
     // SG for the admin task. Needs egress to pull the postgres image and to reach
     // RDS:5432; no inbound. Runs in a public subnet (Mode A) like the app tasks.
@@ -61,6 +65,16 @@ export class DbAdminStack extends cdk.Stack {
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    // Owner of the marketing database; only migrations connect as it. Its own
+    // secret so the running whatsapp-agent task can never read it:
+    //   aws secretsmanager create-secret --name <projectName>/marketing/db-owner \
+    //     --secret-string '{"DB_PASSWORD":"…"}'
+    const marketingOwnerSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'MarketingOwnerSecret',
+      `${projectName}/marketing/db-owner`,
+    );
 
     const taskDef = new ecs.FargateTaskDefinition(this, 'TaskDef', {
       cpu: 256,
@@ -103,10 +117,53 @@ export class DbAdminStack extends cdk.Stack {
           ),
           'DB_PASSWORD',
         ),
+        // For scripts/db/bootstrap-marketing.sql: the owner role runs migrations,
+        // the svc role is what whatsapp-agent connects as.
+        MARKETING_OWNER_DB_PASSWORD: ecs.Secret.fromSecretsManager(
+          marketingOwnerSecret,
+          'DB_PASSWORD',
+        ),
+        MARKETING_SVC_DB_PASSWORD: ecs.Secret.fromSecretsManager(
+          secretsmanager.Secret.fromSecretNameV2(
+            this,
+            'WhatsappAgentAppSecret',
+            `${projectName}/whatsapp-agent/app`,
+          ),
+          'DB_PASSWORD',
+        ),
       },
       // Harmless default (a connectivity check); run-sql.sh overrides this.
       command: ['psql', '-c', 'SELECT 1'],
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'dbadmin' }),
+    });
+
+    // marketing-app migrations: the release's migrations/ baked onto the migrate
+    // CLI (marketing-migrations image, same tag as whatsapp-agent). Run with
+    // scripts/db/migrate-marketing.sh BEFORE deploying a new whatsapp-agent image —
+    // the service refuses to start below its required schema version.
+    const migrateTaskDef = new ecs.FargateTaskDefinition(this, 'MarketingMigrateTaskDef', {
+      cpu: 256,
+      memoryLimitMiB: 512,
+    });
+    migrateTaskDef.addContainer('migrate', {
+      image: ecs.ContainerImage.fromEcrRepository(
+        ecr.marketingMigrations,
+        imageTags.whatsappAgent,
+      ),
+      // lib/pq reads the password from PGPASSWORD, so the URL carries none.
+      // migrate-marketing.sh overrides the trailing "up" for down/version/force.
+      command: [
+        '-path',
+        '/migrations',
+        '-database',
+        `postgres://${MARKETING_OWNER_ROLE}@${database.dbInstanceEndpointAddress}:` +
+          `${database.dbInstanceEndpointPort}/${MARKETING_DB}?sslmode=require`,
+        'up',
+      ],
+      secrets: {
+        PGPASSWORD: ecs.Secret.fromSecretsManager(marketingOwnerSecret, 'DB_PASSWORD'),
+      },
+      logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'migrate' }),
     });
 
     // Consumed by scripts/db/run-sql.sh to launch the one-off task.
@@ -119,5 +176,8 @@ export class DbAdminStack extends cdk.Stack {
       value: vpc.publicSubnets.map((s) => s.subnetId).join(','),
     });
     new cdk.CfnOutput(this, 'LogGroupName', { value: logGroup.logGroupName });
+    new cdk.CfnOutput(this, 'MarketingMigrateTaskDefArn', {
+      value: migrateTaskDef.taskDefinitionArn,
+    });
   }
 }

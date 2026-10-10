@@ -1,0 +1,87 @@
+// whatsapp-agent (marketing-app) cloud-task Alloy config.
+//
+// Runs as a NON-ESSENTIAL sidecar in the whatsapp-agent task. All containers in
+// a Fargate task share one network namespace, so the app exports OTLP/HTTP to
+// 127.0.0.1:4318 and nothing here is reachable from the task's public ENI.
+//
+// The service holds no telemetry-backend credentials: it knows one endpoint,
+// and this file decides where its traces, metrics and logs go. Redaction is NOT
+// done here — the service drops content and reduces phone numbers in process,
+// before export.
+//
+// Langfuse is an optional second trace destination, appended by
+// lib/stacks/marketing-stack.ts from whatsapp-agent-langfuse.alloy when
+// `-c whatsappAgentLangfuse=on`; the LANGFUSE_TRACES marker below is where its
+// input joins the trace fan-out. Keep the marker on that line.
+//
+// Not validated at `cdk synth`. Before deploying a change, check it with
+//   docker run --rm -v "$PWD/observability/alloy:/cfg" grafana/alloy:<tag> \
+//     fmt /cfg/whatsapp-agent.alloy
+//
+// MEMORY: the sidecar is hard-capped at 256 MiB (lib/constructs/ecs-service.ts),
+// so the limiter refuses data at 160 MiB and the queues are bounded.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+otelcol.receiver.otlp "app" {
+  http {
+    endpoint = "127.0.0.1:4318"
+  }
+
+  output {
+    logs    = [otelcol.processor.memory_limiter.app.input]
+    traces  = [otelcol.processor.memory_limiter.app.input]
+    metrics = [otelcol.processor.memory_limiter.app.input]
+  }
+}
+
+otelcol.processor.memory_limiter "app" {
+  check_interval = "1s"
+  limit          = "160MiB"
+
+  output {
+    logs    = [otelcol.processor.batch.app.input]
+    traces  = [otelcol.processor.batch.app.input]
+    metrics = [otelcol.processor.batch.app.input]
+  }
+}
+
+otelcol.processor.batch "app" {
+  output {
+    logs    = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input /*LANGFUSE_TRACES*/]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Grafana Cloud: traces (Tempo), metrics (Mimir), logs (Loki) via the OTLP
+// gateway. Same credentials shape as the laguna sidecar.
+// ---------------------------------------------------------------------------
+
+otelcol.auth.basic "grafana_cloud" {
+  username = sys.env("GRAFANA_CLOUD_OTLP_USER")
+  password = sys.env("GRAFANA_CLOUD_OTLP_TOKEN")
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 50
+  }
+
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "5s"
+    max_interval     = "30s"
+    max_elapsed_time = "0s"
+  }
+}

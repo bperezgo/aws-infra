@@ -49,7 +49,11 @@ export interface EcsServiceProps {
   alloyImage?: ecs.ContainerImage;
   alloyConfig?: string;
   alloySecrets?: Record<string, ecs.Secret>;
-  healthCheckPath?: string;
+  /**
+   * Path the app container's wget health check hits. `false` omits the check —
+   * required for distroless images, which have no shell or wget to run it.
+   */
+  healthCheckPath?: string | false;
   efsVolumes?: EfsVolumeMount[];
   /**
    * Phase A (default): task runs in PUBLIC subnet with public IP for outbound
@@ -155,7 +159,7 @@ export class EcsService extends Construct {
         logGroup,
         streamPrefix: 'ecs',
       }),
-      healthCheck: {
+      healthCheck: healthCheckPath === false ? undefined : {
         // Use wget, not curl: the alpine-based service images ship busybox wget
         // but not curl. --spider makes a request without downloading the body and
         // exits non-zero on any non-2xx, which is exactly what ECS wants.

@@ -9,6 +9,7 @@ import { EcrStack } from '../lib/stacks/ecr-stack';
 import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
+import { MarketingStack } from '../lib/stacks/marketing-stack';
 import { TailscaleStack } from '../lib/stacks/tailscale-stack';
 import { CostStack } from '../lib/stacks/cost-stack';
 import { Guardrails } from '../lib/aspects/guardrails';
@@ -71,6 +72,21 @@ const services = new ServicesStack(app, `${cfg.projectName}-services`, {
 });
 cdk.Tags.of(services).add('Service', 'services');
 
+// marketing-app (WhatsApp agent). Own stack so its deploys never touch laguna.
+// Run its migrations (scripts/db/migrate-marketing.sh) before deploying a new tag.
+const marketing = new MarketingStack(app, `${cfg.projectName}-marketing`, {
+  env,
+  projectName: cfg.projectName,
+  vpc: network.vpc,
+  cluster: network.cluster,
+  namespace: network.namespace,
+  database: data.database,
+  dbSecurityGroup: data.dbSecurityGroup,
+  ecr,
+  imageTags,
+});
+cdk.Tags.of(marketing).add('Service', 'marketing');
+
 // On-demand DB admin task (create databases/roles, import dumps) run from inside
 // the VPC. Defines a runnable task only — trigger it with scripts/db/run-sql.sh.
 const dbAdmin = new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
@@ -80,6 +96,8 @@ const dbAdmin = new DbAdminStack(app, `${cfg.projectName}-dbadmin`, {
   cluster: network.cluster,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
+  ecr,
+  imageTags,
 });
 cdk.Tags.of(dbAdmin).add('Service', 'dbadmin');
 

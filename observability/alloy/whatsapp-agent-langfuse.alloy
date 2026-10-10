@@ -1,0 +1,62 @@
+// Langfuse trace branch for whatsapp-agent.alloy — appended to it only when
+// `-c whatsappAgentLangfuse=on`. Ported from marketing-app's dev config
+// (.devcontainer/alloy/config.alloy); keep the renames in step with it.
+//
+// Langfuse reads attribute names the semantic conventions do not use, so this
+// branch renames them. The Grafana branch keeps the names ADK emitted.
+
+otelcol.processor.transform "langfuse" {
+  // A span missing one of these attributes is normal (the root span has no
+  // model, the tool span has no conversation id); ignore rather than drop the
+  // batch it travelled in.
+  error_mode = "ignore"
+
+  trace_statements {
+    context = "span"
+
+    statements = [
+      "set(attributes[\"session.id\"], attributes[\"gen_ai.conversation.id\"]) where attributes[\"gen_ai.conversation.id\"] != nil",
+      "delete_key(attributes, \"gen_ai.conversation.id\") where attributes[\"session.id\"] != nil",
+
+      // Already redacted in process ("57*******67"); this only renames it.
+      "set(attributes[\"user.id\"], attributes[\"app.contact\"]) where attributes[\"app.contact\"] != nil",
+      "delete_key(attributes, \"app.contact\") where attributes[\"user.id\"] != nil",
+
+      // Absent in production (TELEMETRY_CONTENT=none drops them in process).
+      "set(attributes[\"gen_ai.tool.call.arguments\"], attributes[\"gcp.vertex.agent.tool_call_args\"]) where attributes[\"gcp.vertex.agent.tool_call_args\"] != nil",
+      "delete_key(attributes, \"gcp.vertex.agent.tool_call_args\") where attributes[\"gen_ai.tool.call.arguments\"] != nil",
+      "set(attributes[\"gen_ai.tool.call.result\"], attributes[\"gcp.vertex.agent.tool_response\"]) where attributes[\"gcp.vertex.agent.tool_response\"] != nil",
+      "delete_key(attributes, \"gcp.vertex.agent.tool_response\") where attributes[\"gen_ai.tool.call.result\"] != nil",
+    ]
+  }
+
+  output {
+    traces = [otelcol.exporter.otlphttp.langfuse.input]
+  }
+}
+
+otelcol.auth.basic "langfuse" {
+  username = sys.env("LANGFUSE_PUBLIC_KEY")
+  password = sys.env("LANGFUSE_SECRET_KEY")
+}
+
+otelcol.exporter.otlphttp "langfuse" {
+  client {
+    // OTel base path, e.g. https://cloud.langfuse.com/api/public/otel — the
+    // exporter appends /v1/traces.
+    endpoint = sys.env("LANGFUSE_OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.langfuse.handler
+  }
+
+  sending_queue {
+    enabled    = true
+    queue_size = 50
+  }
+
+  retry_on_failure {
+    enabled          = true
+    initial_interval = "5s"
+    max_interval     = "30s"
+    max_elapsed_time = "0s"
+  }
+}

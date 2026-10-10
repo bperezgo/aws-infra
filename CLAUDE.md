@@ -59,6 +59,10 @@ the aspect is the broad net; assertions pin the details.
 - **Fargate CPU/memory come in fixed pairs.** The tunnel sidecar doubles memory (512→1024).
 - **Offline synth** (hook/CI) uses account `123456789012` (its AZs are cached in
   `cdk.context.json`) and `-c tailscaleAuthKeyArn=` to skip the one stack needing a live lookup.
+- **Distroless images** (whatsapp-agent, cloudflared) have no shell/wget — pass
+  `healthCheckPath: false` to `EcsService` or the CMD-SHELL check fails every deploy.
+- **marketing-app migrations run before the service rolls**: bump tag → deploy
+  `-dbadmin` → `scripts/db/migrate-marketing.sh` → deploy `-marketing`.
 - **Tailscale stack is opt-in** via `tailscaleAuthKeyArn` context; it needs an SSM AMI lookup.
 - Docs under `docs/` are kept local — don't commit them.
 

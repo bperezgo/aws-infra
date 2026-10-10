@@ -27,6 +27,11 @@ export const ImageTagsSchema = z.object({
   laguna: z
     .string()
     .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
+  // marketing-app release. One tag for both of its images (whatsapp-agent and
+  // marketing-migrations) so the migrations that run always match the service.
+  whatsappAgent: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
   // Third-party sidecar (cloudflared) uses calendar versioning (YYYY.M.P) that
   // we don't control, so no strict pattern — just a non-empty tag. A wrong tag
   // fails loudly at image pull, and the point is only to avoid the moving

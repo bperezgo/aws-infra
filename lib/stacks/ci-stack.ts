@@ -27,6 +27,7 @@ export interface CiStackProps extends cdk.StackProps {
  */
 export class CiStack extends cdk.Stack {
   public readonly lagunaPushRole: iam.Role;
+  public readonly marketingPushRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: CiStackProps) {
     super(scope, id, props);
@@ -44,12 +45,30 @@ export class CiStack extends cdk.Stack {
       provider,
       githubOwner,
       githubRepo: 'laguna-escondida-backend',
-      repositoryArn: ecr.laguna.repositoryArn,
+      repositoryArns: [ecr.laguna.repositoryArn],
     });
 
     new cdk.CfnOutput(this, 'LagunaPushRoleArn', {
       value: this.lagunaPushRole.roleArn,
       description: 'Paste into laguna-escondida-backend repo as AWS_ROLE_ARN var',
+    });
+
+    // marketing-app: one role pushing both release images (service + migrations).
+    this.marketingPushRole = this.makePushRole({
+      id: 'MarketingPushRole',
+      roleName: 'gha-marketing-ecr-push',
+      provider,
+      githubOwner,
+      githubRepo: 'marketing-app',
+      repositoryArns: [
+        ecr.whatsappAgent.repositoryArn,
+        ecr.marketingMigrations.repositoryArn,
+      ],
+    });
+
+    new cdk.CfnOutput(this, 'MarketingPushRoleArn', {
+      value: this.marketingPushRole.roleArn,
+      description: 'Set as AWS_ROLE_ARN repo variable in marketing-app',
     });
   }
 
@@ -59,9 +78,9 @@ export class CiStack extends cdk.Stack {
     provider: iam.IOpenIdConnectProvider;
     githubOwner: string;
     githubRepo: string;
-    repositoryArn: string;
+    repositoryArns: string[];
   }): iam.Role {
-    const { id, roleName, provider, githubOwner, githubRepo, repositoryArn } = params;
+    const { id, roleName, provider, githubOwner, githubRepo, repositoryArns } = params;
 
     const role = new iam.Role(this, id, {
       roleName,
@@ -87,7 +106,7 @@ export class CiStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Push/pull scoped to this repo only.
+    // Push/pull scoped to these repos only.
     role.addToPolicy(new iam.PolicyStatement({
       actions: [
         'ecr:BatchCheckLayerAvailability',
@@ -97,7 +116,7 @@ export class CiStack extends cdk.Stack {
         'ecr:PutImage',
         'ecr:UploadLayerPart',
       ],
-      resources: [repositoryArn],
+      resources: repositoryArns,
     }));
 
     return role;
