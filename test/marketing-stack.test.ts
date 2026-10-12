@@ -233,6 +233,8 @@ describe('EcrStack — marketing repos', () => {
 describe('CiStack — marketing-app release role', () => {
   const { template } = synthCi();
 
+  // marketing-app's OIDC tokens use GitHub's immutable subject format
+  // (owner@ownerId/repo@repoId), not the legacy owner/repo form laguna uses.
   test('only v* tags of the marketing-app repo can assume the push role', () => {
     template.hasResourceProperties('AWS::IAM::Role', {
       RoleName: 'gha-marketing-ecr-push',
@@ -242,7 +244,7 @@ describe('CiStack — marketing-app release role', () => {
             Condition: Match.objectLike({
               StringLike: {
                 'token.actions.githubusercontent.com:sub':
-                  'repo:test-owner/marketing-app:ref:refs/tags/v*',
+                  'repo:test-owner@42921391/marketing-app@1377597523:ref:refs/tags/v*',
               },
             }),
           }),

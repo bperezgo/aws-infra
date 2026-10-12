@@ -60,6 +60,10 @@ export class CiStack extends cdk.Stack {
       provider,
       githubOwner,
       githubRepo: 'marketing-app',
+      // This repo opted into GitHub's immutable OIDC subject, so its tokens
+      // carry `repo:<owner>@<ownerId>/<repo>@<repoId>:...`. IDs from
+      // `gh api repos/bperezgo/marketing-app/actions/oidc/customization/sub`.
+      immutableSubject: { ownerId: '42921391', repoId: '1377597523' },
       repositoryArns: [
         ecr.whatsappAgent.repositoryArn,
         ecr.marketingMigrations.repositoryArn,
@@ -79,8 +83,13 @@ export class CiStack extends cdk.Stack {
     githubOwner: string;
     githubRepo: string;
     repositoryArns: string[];
+    immutableSubject?: { ownerId: string; repoId: string };
   }): iam.Role {
-    const { id, roleName, provider, githubOwner, githubRepo, repositoryArns } = params;
+    const { id, roleName, provider, githubOwner, githubRepo, repositoryArns, immutableSubject } = params;
+
+    const subjectRepo = immutableSubject
+      ? `${githubOwner}@${immutableSubject.ownerId}/${githubRepo}@${immutableSubject.repoId}`
+      : `${githubOwner}/${githubRepo}`;
 
     const role = new iam.Role(this, id, {
       roleName,
@@ -93,7 +102,7 @@ export class CiStack extends cdk.Stack {
           },
           // Only tag pushes (releases) can assume — not branches, not PRs.
           StringLike: {
-            'token.actions.githubusercontent.com:sub': `repo:${githubOwner}/${githubRepo}:ref:refs/tags/v*`,
+            'token.actions.githubusercontent.com:sub': `repo:${subjectRepo}:ref:refs/tags/v*`,
           },
         },
         'sts:AssumeRoleWithWebIdentity',
