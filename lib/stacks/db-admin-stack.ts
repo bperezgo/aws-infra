@@ -131,6 +131,18 @@ export class DbAdminStack extends cdk.Stack {
           ),
           'DB_PASSWORD',
         ),
+        // For scripts/db/create-personal-role.sql: a human login (used over
+        // Tailscale) that can SET ROLE into each project's roles on demand.
+        //   aws secretsmanager create-secret --name <projectName>/db/personal \
+        //     --secret-string '{"DB_PASSWORD":"…"}'
+        PERSONAL_DB_PASSWORD: ecs.Secret.fromSecretsManager(
+          secretsmanager.Secret.fromSecretNameV2(
+            this,
+            'PersonalDbSecret',
+            `${projectName}/db/personal`,
+          ),
+          'DB_PASSWORD',
+        ),
       },
       // Harmless default (a connectivity check); run-sql.sh overrides this.
       command: ['psql', '-c', 'SELECT 1'],
