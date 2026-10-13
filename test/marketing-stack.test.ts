@@ -135,6 +135,14 @@ describe('MarketingStack — whatsapp-agent service', () => {
     assert.match(String(env.OTEL_RESOURCE_ATTRIBUTES), /service\.version=v0\.1\.0/);
   });
 
+  test('labels telemetry as the production marketing service, apart from laguna', () => {
+    const attrs = String(envOf(container(template, 'app')).OTEL_RESOURCE_ATTRIBUTES);
+    assert.match(attrs, /(^|,)service\.namespace=marketing(,|$)/);
+    // The cdk.json `env` ("dev") names the stacks; this deployment serves real
+    // customers, so its telemetry says production regardless.
+    assert.match(attrs, /(^|,)deployment\.environment\.name=production(,|$)/);
+  });
+
   test('ships a cloudflared sidecar reading its token from the infra secret', () => {
     assert.ok(secretNames(container(template, 'cloudflared')).includes('TUNNEL_TOKEN'));
   });

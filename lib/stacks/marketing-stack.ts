@@ -86,7 +86,11 @@ export class MarketingStack extends cdk.Stack {
     if (readiness !== 'serve' && readiness !== 'develop') {
       throw new Error(`whatsappAgentReadiness must be serve|develop, got "${readiness}"`);
     }
-    const deployEnv = ctx('env') ?? 'dev';
+    // Telemetry labels, not the cdk.json `env` (which only names the stacks): this
+    // deployment serves real customers, and `marketing` groups the product's
+    // services apart from laguna in Grafana.
+    const telemetryEnv = 'production';
+    const serviceNamespace = 'marketing';
 
     // What the running app reads. Create once (keys must all exist or the task
     // fails to start):
@@ -165,7 +169,8 @@ export class MarketingStack extends cdk.Stack {
         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: 'false',
         OTEL_SERVICE_NAME: 'whatsapp-agent',
         OTEL_RESOURCE_ATTRIBUTES:
-          `deployment.environment.name=${deployEnv},service.version=${imageTags.whatsappAgent}`,
+          `deployment.environment.name=${telemetryEnv},service.namespace=${serviceNamespace},` +
+          `service.version=${imageTags.whatsappAgent}`,
         // Unset means no telemetry at all in this app, so it follows the sidecar.
         ...(alloyEnabled ? { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318' } : {}),
       },
