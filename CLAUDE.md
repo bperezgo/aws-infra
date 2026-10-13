@@ -26,6 +26,10 @@ changing infra — several "odd" choices are intentional and enforced.
 
 Bypass the hook only in emergencies: `git commit --no-verify`.
 
+**Agents: never `git commit` (or push) until the user explicitly says to.** Leave changes
+uncommitted in the working tree so they can be reviewed with `git diff` first; when the
+work is done, summarize what changed and ask. Approval covers that one commit only.
+
 ## Rules the Guardrails aspect enforces (`lib/aspects/guardrails.ts`)
 
 These fail `cdk synth` app-wide — write compliant code the first time:
