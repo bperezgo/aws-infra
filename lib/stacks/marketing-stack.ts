@@ -154,10 +154,13 @@ export class MarketingStack extends cdk.Stack {
         : undefined,
       alloyConfig: alloyEnabled ? whatsappAgentAlloyConfig(langfuseEnabled) : undefined,
       alloySecrets: alloyEnabled ? alloySecrets : undefined,
-      // Distroless image: no shell or wget for a container check. A failed boot
-      // (bad DB, unmigrated schema, stand-in facts) exits, which the circuit
-      // breaker catches; /readyz is probed through the tunnel instead.
-      healthCheckPath: false,
+      // Distroless image: no shell or wget, so the binary probes its own /healthz
+      // (liveness — /readyz would fail on a Postgres blip and have ECS replace a
+      // task that recovers by itself). Needs whatsapp-agent >= the release that
+      // added the `healthcheck` subcommand.
+      healthCheckCommand: ['/app/whatsapp-agent', 'healthcheck'],
+      // Reached only through the tunnel; nothing resolves it inside the VPC.
+      cloudMap: false,
       environment: {
         PORT: '8080',
         DATABASE_URL: databaseUrl,

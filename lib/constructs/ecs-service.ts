@@ -54,6 +54,18 @@ export interface EcsServiceProps {
    * required for distroless images, which have no shell or wget to run it.
    */
   healthCheckPath?: string | false;
+  /**
+   * Exec-form health check command (no shell), e.g. a distroless binary probing
+   * itself. Takes precedence over `healthCheckPath`.
+   */
+  healthCheckCommand?: string[];
+  /**
+   * Register the service in the Cloud Map namespace (`<serviceName>.<ns>`).
+   * Default true. Turn off for a service nothing calls inside the VPC: an
+   * instance only turns healthy via a container health check, and ECS waits on
+   * it before a deployment completes.
+   */
+  cloudMap?: boolean;
   efsVolumes?: EfsVolumeMount[];
   /**
    * Phase A (default): task runs in PUBLIC subnet with public IP for outbound
@@ -91,6 +103,8 @@ export class EcsService extends Construct {
       alloyConfig,
       alloySecrets = {},
       healthCheckPath = '/health',
+      healthCheckCommand,
+      cloudMap = true,
       efsVolumes = [],
       publicNetworking = true,
     } = props;
@@ -159,11 +173,13 @@ export class EcsService extends Construct {
         logGroup,
         streamPrefix: 'ecs',
       }),
-      healthCheck: healthCheckPath === false ? undefined : {
+      healthCheck: !healthCheckCommand && healthCheckPath === false ? undefined : {
         // Use wget, not curl: the alpine-based service images ship busybox wget
         // but not curl. --spider makes a request without downloading the body and
         // exits non-zero on any non-2xx, which is exactly what ECS wants.
-        command: ['CMD-SHELL', `wget --no-verbose --tries=1 --spider http://localhost:${containerPort}${healthCheckPath} || exit 1`],
+        command: healthCheckCommand
+          ? ['CMD', ...healthCheckCommand]
+          : ['CMD-SHELL', `wget --no-verbose --tries=1 --spider http://localhost:${containerPort}${healthCheckPath} || exit 1`],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
@@ -285,12 +301,14 @@ export class EcsService extends Construct {
           weight: 1,
         },
       ],
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: serviceName,
-        dnsRecordType: servicediscovery.DnsRecordType.A,
-        dnsTtl: cdk.Duration.seconds(10),
-      },
+      cloudMapOptions: cloudMap
+        ? {
+            cloudMapNamespace: namespace,
+            name: serviceName,
+            dnsRecordType: servicediscovery.DnsRecordType.A,
+            dnsTtl: cdk.Duration.seconds(10),
+          }
+        : undefined,
       enableExecuteCommand: true,
     });
   }

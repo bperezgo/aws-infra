@@ -73,9 +73,12 @@ describe('MarketingStack — whatsapp-agent service', () => {
     });
   });
 
-  test('registers whatsapp-agent in Cloud Map', () => {
-    template.hasResourceProperties('AWS::ServiceDiscovery::Service', {
-      Name: 'whatsapp-agent',
+  test('is not registered in Cloud Map (nothing calls it inside the VPC)', () => {
+    // Meta reaches it through the tunnel. A registration would also make every
+    // deploy wait on the Cloud Map instance turning healthy.
+    template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);
+    template.hasResourceProperties('AWS::ECS::Service', {
+      ServiceRegistries: Match.absent(),
     });
   });
 
@@ -86,10 +89,11 @@ describe('MarketingStack — whatsapp-agent service', () => {
     });
   });
 
-  test('app container has no shell health check (image is distroless)', () => {
+  test('app health check runs the binary itself (image is distroless)', () => {
     // gcr.io/distroless/static has no /bin/sh and no wget: a CMD-SHELL check can
-    // never pass, so the circuit breaker would roll back every deploy.
-    assert.equal(container(template, 'app').HealthCheck, undefined);
+    // never pass, so the check is exec-form and probes liveness, not readiness.
+    const hc = container(template, 'app').HealthCheck as { Command: string[] };
+    assert.deepEqual(hc.Command, ['CMD', '/app/whatsapp-agent', 'healthcheck']);
   });
 
   test('connects as marketing_svc over SSL, password only via PGPASSWORD secret', () => {
