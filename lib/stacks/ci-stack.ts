@@ -115,11 +115,13 @@ export class CiStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Push/pull scoped to these repos only.
+    // Push/pull scoped to these repos only. Pull (GetDownloadUrlForLayer) is needed by the
+    // release workflow's Trivy scan, which reads the image back from ECR after the push.
     role.addToPolicy(new iam.PolicyStatement({
       actions: [
         'ecr:BatchCheckLayerAvailability',
         'ecr:BatchGetImage',
+        'ecr:GetDownloadUrlForLayer',
         'ecr:CompleteLayerUpload',
         'ecr:InitiateLayerUpload',
         'ecr:PutImage',
