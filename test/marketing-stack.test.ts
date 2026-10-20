@@ -11,7 +11,7 @@ import {
 // The whatsapp-agent (marketing-app repo) lives in its own stack so deploying it
 // never touches laguna. Its image is DISTROLESS, its DB access goes through
 // grant-holder roles defined by the app's migrations, and its telemetry fans out
-// through Alloy to Grafana Cloud and (opt-in) Langfuse. These tests pin the
+// through Alloy to Grafana Cloud and Langfuse. These tests pin the
 // details that would otherwise only show up as a failed boot or a leaked secret.
 
 type ContainerDef = {
@@ -120,6 +120,18 @@ describe('MarketingStack — whatsapp-agent service', () => {
     }
   });
 
+  test('model tuning and staff escalation number come from the app secret', () => {
+    // Optional to the app but set in the secret: a key the task def doesn't name
+    // never reaches the container (escalations silently fell back to the public
+    // contact).
+    const app = container(template, 'app');
+    const env = envOf(app);
+    for (const name of ['CLAUDE_MODEL', 'CLAUDE_EFFORT', 'STAFF_WHATSAPP_LAGUNA_ESCONDIDA']) {
+      assert.ok(secretNames(app).includes(name), `${name} must be injected from the secret`);
+      assert.ok(!(name in env), `${name} must not be plaintext env`);
+    }
+  });
+
   test('app holds no telemetry-backend credentials (Alloy does)', () => {
     const names = secretNames(container(template, 'app')).join(',');
     assert.doesNotMatch(names, /GRAFANA|LANGFUSE/);
@@ -169,9 +181,27 @@ describe('MarketingStack — whatsapp-agent service', () => {
     assert.match(cfg, /queue_size\s*=/);
   });
 
-  test('Langfuse is off by default: no exporter, no keys', () => {
-    assert.doesNotMatch(alloyDirectives(template), /langfuse/i);
-    assert.doesNotMatch(secretNames(container(template, 'alloy')).join(','), /LANGFUSE/);
+  test('alloy keeps idle OTLP connections open longer than the 60s metric interval', () => {
+    // Alloy's default idle_timeout is 1m, exactly the Go SDK's export interval:
+    // the app reuses a keep-alive connection just as Alloy closes it, and that
+    // minute of metrics is lost ("connection reset by peer").
+    const m = alloyDirectives(template).match(/idle_timeout\s*=\s*"(\d+)m"/);
+    assert.ok(m, 'otlp receiver must set idle_timeout');
+    assert.ok(Number(m[1]) > 1, `idle_timeout ${m[1]}m must exceed the 1m export interval`);
+  });
+
+  test('Langfuse is on by default: traces fan out to it, keys on Alloy only', () => {
+    // On in code, not a deploy flag: a flag left off one `cdk deploy` silently
+    // dropped the branch from production.
+    const cfg = alloyDirectives(template);
+    assert.match(cfg, /otelcol\.exporter\.otlphttp "langfuse"/);
+    // Traces fan out to both destinations; Langfuse's renames stay on its branch.
+    assert.match(cfg, /otelcol\.processor\.transform\.langfuse\.input/);
+    assert.match(cfg, /otelcol\.exporter\.otlphttp\.grafana_cloud\.input/);
+    const alloySecrets = secretNames(container(template, 'alloy'));
+    for (const k of ['LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_OTLP_ENDPOINT']) {
+      assert.ok(alloySecrets.includes(k), `alloy needs ${k}`);
+    }
   });
 
   test('opens Postgres (5432) from the service to the DB security group', () => {
@@ -190,18 +220,10 @@ describe('MarketingStack — whatsapp-agent service', () => {
 });
 
 describe('MarketingStack — escape hatches', () => {
-  test('whatsappAgentLangfuse=on adds the Langfuse branch to Alloy only', () => {
-    const { template } = synthMarketing({ whatsappAgentLangfuse: 'on' });
-    const cfg = alloyDirectives(template);
-    assert.match(cfg, /otelcol\.exporter\.otlphttp "langfuse"/);
-    // Traces fan out to both destinations; Langfuse's renames stay on its branch.
-    assert.match(cfg, /otelcol\.processor\.transform\.langfuse\.input/);
-    assert.match(cfg, /otelcol\.exporter\.otlphttp\.grafana_cloud\.input/);
-    const alloySecrets = secretNames(container(template, 'alloy'));
-    for (const k of ['LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_OTLP_ENDPOINT']) {
-      assert.ok(alloySecrets.includes(k), `alloy needs ${k}`);
-    }
-    assert.doesNotMatch(secretNames(container(template, 'app')).join(','), /LANGFUSE/);
+  test('whatsappAgentLangfuse=off drops the Langfuse exporter and its keys', () => {
+    const { template } = synthMarketing({ whatsappAgentLangfuse: 'off' });
+    assert.doesNotMatch(alloyDirectives(template), /langfuse/i);
+    assert.doesNotMatch(secretNames(container(template, 'alloy')).join(','), /LANGFUSE/);
   });
 
   test('whatsappAgentAlloy=off drops the sidecar AND the OTLP endpoint', () => {

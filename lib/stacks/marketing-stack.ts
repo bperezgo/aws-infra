@@ -78,7 +78,9 @@ export class MarketingStack extends cdk.Stack {
     const desiredCount = Number(ctx('whatsappAgentDesiredCount') ?? 1);
     const tunnelEnabled = ctx('whatsappAgentTunnel') !== 'off';
     const alloyEnabled = ctx('whatsappAgentAlloy') !== 'off';
-    const langfuseEnabled = alloyEnabled && ctx('whatsappAgentLangfuse') === 'on';
+    // On unless opted out: as an opt-in flag, one deploy that forgot it took
+    // Langfuse out of production without anything failing.
+    const langfuseEnabled = alloyEnabled && ctx('whatsappAgentLangfuse') !== 'off';
     // serve refuses to start a product whose facts are stand-ins. develop is for a
     // Meta TEST number only — it lets placeholder contact details reach whoever
     // writes in.
@@ -96,7 +98,8 @@ export class MarketingStack extends cdk.Stack {
     // fails to start):
     //   aws secretsmanager create-secret --name <projectName>/whatsapp-agent/app \
     //     --secret-string '{"ANTHROPIC_API_KEY":"…","WHATSAPP_ACCESS_TOKEN":"…",
-    //       "WHATSAPP_VERIFY_TOKEN":"…","WHATSAPP_APP_SECRET":"…","DB_PASSWORD":"…"}'
+    //       "WHATSAPP_VERIFY_TOKEN":"…","WHATSAPP_APP_SECRET":"…","DB_PASSWORD":"…",
+    //       "CLAUDE_MODEL":"…","CLAUDE_EFFORT":"…","STAFF_WHATSAPP_LAGUNA_ESCONDIDA":"…"}'
     // DB_PASSWORD is marketing_svc's — the db-admin task sets the role from it.
     const appSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -104,7 +107,7 @@ export class MarketingStack extends cdk.Stack {
       `${projectName}/whatsapp-agent/app`,
     );
     // What the sidecars read: CF_TUNNEL_TOKEN, GRAFANA_CLOUD_OTLP_{ENDPOINT,USER,
-    // TOKEN}, and with Langfuse on LANGFUSE_{PUBLIC_KEY,SECRET_KEY,OTLP_ENDPOINT}.
+    // TOKEN}, and unless Langfuse is off LANGFUSE_{PUBLIC_KEY,SECRET_KEY,OTLP_ENDPOINT}.
     // Separate from laguna/infra so neither task can read the other's tunnel token.
     const infraSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -183,6 +186,14 @@ export class MarketingStack extends cdk.Stack {
         WHATSAPP_VERIFY_TOKEN: ecs.Secret.fromSecretsManager(appSecret, 'WHATSAPP_VERIFY_TOKEN'),
         WHATSAPP_APP_SECRET: ecs.Secret.fromSecretsManager(appSecret, 'WHATSAPP_APP_SECRET'),
         PGPASSWORD: ecs.Secret.fromSecretsManager(appSecret, 'DB_PASSWORD'),
+        // Optional to the app (it falls back to its own model and to the public
+        // contact), but once named here the keys must exist in the secret.
+        CLAUDE_MODEL: ecs.Secret.fromSecretsManager(appSecret, 'CLAUDE_MODEL'),
+        CLAUDE_EFFORT: ecs.Secret.fromSecretsManager(appSecret, 'CLAUDE_EFFORT'),
+        STAFF_WHATSAPP_LAGUNA_ESCONDIDA: ecs.Secret.fromSecretsManager(
+          appSecret,
+          'STAFF_WHATSAPP_LAGUNA_ESCONDIDA',
+        ),
       },
     });
 

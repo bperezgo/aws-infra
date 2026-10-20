@@ -1,5 +1,5 @@
-// Langfuse trace branch for whatsapp-agent.alloy — appended to it only when
-// `-c whatsappAgentLangfuse=on`. Ported from marketing-app's dev config
+// Langfuse trace branch for whatsapp-agent.alloy — appended to it unless
+// `-c whatsappAgentLangfuse=off`. Ported from marketing-app's dev config
 // (.devcontainer/alloy/config.alloy); keep the renames in step with it.
 //
 // Langfuse reads attribute names the semantic conventions do not use, so this

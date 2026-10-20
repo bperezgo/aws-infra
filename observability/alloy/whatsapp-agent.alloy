@@ -9,9 +9,9 @@
 // done here — the service drops content and reduces phone numbers in process,
 // before export.
 //
-// Langfuse is an optional second trace destination, appended by
-// lib/stacks/marketing-stack.ts from whatsapp-agent-langfuse.alloy when
-// `-c whatsappAgentLangfuse=on`; the LANGFUSE_TRACES marker below is where its
+// Langfuse is a second trace destination, appended by
+// lib/stacks/marketing-stack.ts from whatsapp-agent-langfuse.alloy unless
+// `-c whatsappAgentLangfuse=off`; the LANGFUSE_TRACES marker below is where its
 // input joins the trace fan-out. Keep the marker on that line.
 //
 // Not validated at `cdk synth`. Before deploying a change, check it with
@@ -29,6 +29,10 @@ logging {
 otelcol.receiver.otlp "app" {
   http {
     endpoint = "127.0.0.1:4318"
+    // Default 1m equals the app's 60s metric export interval, so Alloy closed
+    // the keep-alive connection just as the app reused it ("connection reset by
+    // peer", one minute of metrics lost). Outlive the interval instead.
+    idle_timeout = "5m"
   }
 
   output {
