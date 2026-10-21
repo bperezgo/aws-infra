@@ -1,6 +1,6 @@
 {
-  "laguna": "v1.1.17",
-  "whatsappAgent": "v0.0.3",
+  "laguna": "v1.1.19",
+  "whatsappAgent": "v0.0.4",
   "cloudflared": "2026.7.1",
   "alloy": "v1.18.1"
 }

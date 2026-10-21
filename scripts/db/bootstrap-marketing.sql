@@ -24,10 +24,12 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'marketing_svc')\gexec
 ALTER ROLE marketing_owner WITH LOGIN PASSWORD :'owner_pw';
 ALTER ROLE marketing_svc WITH LOGIN PASSWORD :'svc_pw';
 
--- The grant holders migration 000002 would create. marketing_owner has no
--- CREATEROLE, so they must exist before it runs; its IF NOT EXISTS then skips.
+-- The grant holders the app's migrations would create (000002; 000008 adds
+-- marketing_console). marketing_owner has no CREATEROLE, so each must exist
+-- before its migration runs; the migration's IF NOT EXISTS then skips.
 SELECT format('CREATE ROLE %I NOLOGIN', r)
-FROM unnest(ARRAY['marketing_app', 'marketing_contact', 'marketing_analytics']) AS r
+FROM unnest(ARRAY['marketing_app', 'marketing_contact', 'marketing_analytics',
+                  'marketing_console']) AS r
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r)\gexec
 
 GRANT marketing_app TO marketing_svc;
