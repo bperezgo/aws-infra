@@ -5,6 +5,7 @@ import { DataStack } from '../../lib/stacks/data-stack';
 import { EcrStack } from '../../lib/stacks/ecr-stack';
 import { ServicesStack } from '../../lib/stacks/services-stack';
 import { MarketingStack } from '../../lib/stacks/marketing-stack';
+import { ConsoleStack } from '../../lib/stacks/console-stack';
 import { DbAdminStack } from '../../lib/stacks/db-admin-stack';
 import { CiStack } from '../../lib/stacks/ci-stack';
 
@@ -15,6 +16,7 @@ const TEST_ENV: cdk.Environment = { account: '123456789012', region: 'us-east-1'
 export const TEST_IMAGE_TAGS = {
   laguna: 'v1.1.9',
   whatsappAgent: 'v0.1.0',
+  consoleApi: 'v0.2.0',
   cloudflared: '2026.7.1',
   alloy: 'v1.18.1',
 };
@@ -134,6 +136,25 @@ export function synthMarketing(
     database: data.database,
     dbSecurityGroup: data.dbSecurityGroup,
     lagunaSecurityGroup: services.lagunaSecurityGroup,
+    ecr,
+    imageTags: TEST_IMAGE_TAGS,
+  });
+  return { stack, template: Template.fromStack(stack) };
+}
+
+export function synthConsole(
+  context: Record<string, unknown> = {},
+): { stack: ConsoleStack; template: Template } {
+  const app = new cdk.App({ context });
+  const { network, data, ecr } = foundation(app);
+  const stack = new ConsoleStack(app, `${TEST_PROJECT}-console`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+    vpc: network.vpc,
+    cluster: network.cluster,
+    namespace: network.namespace,
+    database: data.database,
+    dbSecurityGroup: data.dbSecurityGroup,
     ecr,
     imageTags: TEST_IMAGE_TAGS,
   });

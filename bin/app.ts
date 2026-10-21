@@ -10,6 +10,7 @@ import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
 import { MarketingStack } from '../lib/stacks/marketing-stack';
+import { ConsoleStack } from '../lib/stacks/console-stack';
 import { TailscaleStack } from '../lib/stacks/tailscale-stack';
 import { CostStack } from '../lib/stacks/cost-stack';
 import { Guardrails } from '../lib/aspects/guardrails';
@@ -87,6 +88,21 @@ const marketing = new MarketingStack(app, `${cfg.projectName}-marketing`, {
   imageTags,
 });
 cdk.Tags.of(marketing).add('Service', 'marketing');
+
+// marketing-app operations console (console-api + console-web). Own stack so its
+// deploys never roll the agent. Same rule: migrate before deploying a new tag.
+const consoleStack = new ConsoleStack(app, `${cfg.projectName}-console`, {
+  env,
+  projectName: cfg.projectName,
+  vpc: network.vpc,
+  cluster: network.cluster,
+  namespace: network.namespace,
+  database: data.database,
+  dbSecurityGroup: data.dbSecurityGroup,
+  ecr,
+  imageTags,
+});
+cdk.Tags.of(consoleStack).add('Service', 'console');
 
 // On-demand DB admin task (create databases/roles, import dumps) run from inside
 // the VPC. Defines a runnable task only — trigger it with scripts/db/run-sql.sh.

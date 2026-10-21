@@ -32,6 +32,12 @@ export const ImageTagsSchema = z.object({
   whatsappAgent: z
     .string()
     .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
+  // marketing-app's console-api image (it bundles console-web). Same release tags
+  // as whatsappAgent, but its own key so the console rolls without the agent.
+  // Never ahead of the schema the migrate task has applied: it refuses to boot.
+  consoleApi: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
   // Third-party sidecar (cloudflared) uses calendar versioning (YYYY.M.P) that
   // we don't control, so no strict pattern — just a non-empty tag. A wrong tag
   // fails loudly at image pull, and the point is only to avoid the moving

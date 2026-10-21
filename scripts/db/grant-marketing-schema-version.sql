@@ -1,4 +1,4 @@
--- Let whatsapp-agent read schema_migrations. Run once, after the FIRST
+-- Let whatsapp-agent and console-api read schema_migrations. Run once, after the FIRST
 -- scripts/db/migrate-marketing.sh (the migrate CLI creates the table). Idempotent.
 --
 -- Run with: scripts/db/run-sql.sh scripts/db/grant-marketing-schema-version.sql
@@ -11,5 +11,5 @@
 
 \connect marketing
 SET ROLE marketing_owner;
-GRANT SELECT ON schema_migrations TO marketing_app;
+GRANT SELECT ON schema_migrations TO marketing_app, marketing_console;
 RESET ROLE;

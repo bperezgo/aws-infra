@@ -53,7 +53,8 @@ export class CiStack extends cdk.Stack {
       description: 'Paste into laguna-escondida-backend repo as AWS_ROLE_ARN var',
     });
 
-    // marketing-app: one role pushing both release images (service + migrations).
+    // marketing-app: one role pushing every release image (agent, migrations,
+    // console).
     this.marketingPushRole = this.makePushRole({
       id: 'MarketingPushRole',
       roleName: 'gha-marketing-ecr-push',
@@ -67,6 +68,7 @@ export class CiStack extends cdk.Stack {
       repositoryArns: [
         ecr.whatsappAgent.repositoryArn,
         ecr.marketingMigrations.repositoryArn,
+        ecr.consoleApi.repositoryArn,
       ],
     });
 

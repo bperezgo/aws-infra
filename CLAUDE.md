@@ -69,7 +69,8 @@ the aspect is the broad net; assertions pin the details.
   Cloud Map instance only turns healthy via a health check, and ECS (so
   CloudFormation) waits on it — a 3h hang, then rollback.
 - **marketing-app migrations run before the service rolls**: bump tag → deploy
-  `-dbadmin` → `scripts/db/migrate-marketing.sh` → deploy `-marketing`.
+  `-dbadmin` → `scripts/db/migrate-marketing.sh` → deploy `-marketing`. The ops console
+  (`-console`, its own `consoleApi` tag) follows the same rule: migrate first.
 - **Tailscale stack is opt-in** via `tailscaleAuthKeyArn` context; it needs an SSM AMI lookup.
 - Docs under `docs/` are kept local — don't commit them.
 

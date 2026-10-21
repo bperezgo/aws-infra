@@ -131,6 +131,15 @@ export class DbAdminStack extends cdk.Stack {
           ),
           'DB_PASSWORD',
         ),
+        // For scripts/db/bootstrap-marketing.sql: what console-api connects as.
+        MARKETING_CONSOLE_DB_PASSWORD: ecs.Secret.fromSecretsManager(
+          secretsmanager.Secret.fromSecretNameV2(
+            this,
+            'ConsoleApiAppSecret',
+            `${projectName}/console-api/app`,
+          ),
+          'DB_PASSWORD',
+        ),
         // For scripts/db/create-personal-role.sql: a human login (used over
         // Tailscale) that can SET ROLE into each project's roles on demand.
         //   aws secretsmanager create-secret --name <projectName>/db/personal \

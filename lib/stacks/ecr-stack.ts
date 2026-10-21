@@ -10,6 +10,7 @@ export class EcrStack extends cdk.Stack {
   public readonly laguna: ecr.Repository;
   public readonly whatsappAgent: ecr.Repository;
   public readonly marketingMigrations: ecr.Repository;
+  public readonly consoleApi: ecr.Repository;
 
   constructor(scope: Construct, id: string, props: EcrStackProps) {
     super(scope, id, props);
@@ -36,6 +37,14 @@ export class EcrStack extends cdk.Stack {
     });
     this.marketingMigrations = new ecr.Repository(this, 'MarketingMigrationsRepo', {
       repositoryName: 'marketing-migrations',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      emptyOnDelete: false,
+      imageScanOnPush: true,
+      lifecycleRules: [{ maxImageCount: 10 }],
+    });
+    // marketing-app's operations console: console-api with the built console-web.
+    this.consoleApi = new ecr.Repository(this, 'ConsoleApiRepo', {
+      repositoryName: 'console-api',
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       emptyOnDelete: false,
       imageScanOnPush: true,
