@@ -297,3 +297,79 @@ describe('ServicesStack — edge telemetry relay', () => {
     assert.match(alloyDirectives(), /otelcol\.processor\.memory_limiter/);
   });
 });
+
+// The customer MCP server (laguna-escondida-backend cmd/mcp-server, MCP_TOOLSET=
+// customer) the WhatsApp agent takes orders through. A sidecar of the laguna task:
+// same image and release as the backend it fronts, reached over task loopback,
+// no extra task or public IP. Its safety rests on three things pinned here: only
+// the customer toolset, the `agent`-role credentials and the bearer token as
+// secrets, and no way for it to take the backend down with it.
+describe('ServicesStack — customer MCP sidecar', () => {
+  const { template } = synthServices();
+
+  type Container = {
+    Name: string;
+    Image?: unknown;
+    Command?: string[];
+    Essential?: boolean;
+    Memory?: number;
+    PortMappings?: Array<{ ContainerPort: number }>;
+    Environment?: Array<{ Name: string; Value: unknown }>;
+    Secrets?: Array<{ Name: string }>;
+    HealthCheck?: { Command: string[] };
+  };
+  const containers = (t = template): Container[] =>
+    (Object.values(t.findResources('AWS::ECS::TaskDefinition'))[0] as any).Properties
+      .ContainerDefinitions;
+  const mcp = (): Container => {
+    const c = containers().find((x) => x.Name === 'mcp-customer');
+    assert.ok(c, 'no mcp-customer container in the task definition');
+    return c;
+  };
+  const env = (c: Container) =>
+    Object.fromEntries((c.Environment ?? []).map((e) => [e.Name, e.Value]));
+
+  test('runs the backend image as ./mcp-server, same release as the app', () => {
+    const app = containers().find((x) => x.Name === 'app')!;
+    assert.deepEqual(JSON.stringify(mcp().Image), JSON.stringify(app.Image));
+    assert.deepEqual(mcp().Command, ['./mcp-server']);
+  });
+
+  test('serves only the customer toolset, against the backend over loopback', () => {
+    const e = env(mcp());
+    assert.equal(e.MCP_TOOLSET, 'customer');
+    assert.equal(e.LAGUNA_API_URL, 'http://127.0.0.1:8080');
+    assert.equal(e.MCP_ADDR, ':8090');
+    assert.deepEqual(mcp().PortMappings?.map((p) => p.ContainerPort), [8090]);
+  });
+
+  test('agent credentials and bearer token are secrets, never plaintext env', () => {
+    const names = (mcp().Secrets ?? []).map((s) => s.Name);
+    for (const name of ['LAGUNA_USERNAME', 'LAGUNA_PASSWORD', 'MCP_AUTH_TOKEN']) {
+      assert.ok(names.includes(name), `${name} must be a secret`);
+      assert.ok(!(name in env(mcp())), `${name} must not be plaintext env`);
+    }
+    // The admin key unlocks admin-only endpoints the customer toolset never calls.
+    assert.ok(!names.includes('LAGUNA_ADMIN_API_KEY'));
+  });
+
+  test('is non-essential and capped, so it can never take laguna down', () => {
+    assert.equal(mcp().Essential, false);
+    assert.equal(mcp().Memory, 128);
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', { Memory: '1024' });
+  });
+
+  test('health-checks its own /health with wget (alpine image)', () => {
+    assert.match(mcp().HealthCheck!.Command.join(' '), /wget .*localhost:8090\/health/);
+  });
+
+  test('no 8090 ingress in this stack: the consumer opens it (MarketingStack)', () => {
+    const rules = Object.values(template.findResources('AWS::EC2::SecurityGroupIngress'));
+    assert.ok(!rules.some((r: any) => r.Properties.FromPort === 8090));
+  });
+
+  test('lagunaMcp=off drops the sidecar', () => {
+    const { template: off } = synthServices({ lagunaMcp: 'off' });
+    assert.ok(!containers(off).some((c) => c.Name === 'mcp-customer'));
+  });
+});

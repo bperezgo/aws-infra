@@ -79,6 +79,8 @@ export class EcsService extends Construct {
   public readonly service: ecs.FargateService;
   public readonly taskDefinition: ecs.FargateTaskDefinition;
   public readonly securityGroup: ec2.SecurityGroup;
+  /** The task's log group, for sidecars a stack adds to `taskDefinition`. */
+  public readonly logGroup: logs.LogGroup;
 
   constructor(scope: Construct, id: string, props: EcsServiceProps) {
     super(scope, id);
@@ -120,11 +122,12 @@ export class EcsService extends Construct {
     });
 
     // Log group
-    const logGroup = new logs.LogGroup(this, 'Logs', {
+    this.logGroup = new logs.LogGroup(this, 'Logs', {
       logGroupName: `/ecs/${serviceName}`,
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+    const logGroup = this.logGroup;
 
     // Task definition. Fargate only accepts specific CPU/memory PAIRS (e.g. 0.25
     // vCPU allows 512/1024/2048 MB; 0.5 vCPU needs >=1024) — an arbitrary bump

@@ -82,6 +82,7 @@ const marketing = new MarketingStack(app, `${cfg.projectName}-marketing`, {
   namespace: network.namespace,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
+  lagunaSecurityGroup: services.lagunaSecurityGroup,
   ecr,
   imageTags,
 });

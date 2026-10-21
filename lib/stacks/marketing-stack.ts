@@ -17,6 +17,8 @@ export interface MarketingStackProps extends cdk.StackProps {
   namespace: servicediscovery.IPrivateDnsNamespace;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
+  /** laguna's task SG: the agent reaches its customer MCP sidecar on 8090. */
+  lagunaSecurityGroup: ec2.ISecurityGroup;
   ecr: EcrStack;
   imageTags: {
     whatsappAgent: string;
@@ -68,8 +70,17 @@ export class MarketingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: MarketingStackProps) {
     super(scope, id, props);
 
-    const { projectName, vpc, cluster, namespace, database, dbSecurityGroup, ecr, imageTags } =
-      props;
+    const {
+      projectName,
+      vpc,
+      cluster,
+      namespace,
+      database,
+      dbSecurityGroup,
+      lagunaSecurityGroup,
+      ecr,
+      imageTags,
+    } = props;
 
     const ctx = (key: string): string | undefined => {
       const v = this.node.tryGetContext(key);
@@ -81,6 +92,12 @@ export class MarketingStack extends cdk.Stack {
     // On unless opted out: as an opt-in flag, one deploy that forgot it took
     // Langfuse out of production without anything failing.
     const langfuseEnabled = alloyEnabled && ctx('whatsappAgentLangfuse') !== 'off';
+    // laguna's orders backend: the customer MCP sidecar in laguna's task
+    // (ServicesStack, port 8090), by its Cloud Map name. The agent only uses it
+    // for a product whose profile has `abilities: [orders]`. Off: the agent
+    // logs a warning and takes no orders.
+    const ordersEnabled = ctx('whatsappAgentOrders') !== 'off';
+    const lagunaMcpPort = 8090;
     // serve refuses to start a product whose facts are stand-ins. develop is for a
     // Meta TEST number only — it lets placeholder contact details reach whoever
     // writes in.
@@ -179,6 +196,12 @@ export class MarketingStack extends cdk.Stack {
           `service.version=${imageTags.whatsappAgent}`,
         // Unset means no telemetry at all in this app, so it follows the sidecar.
         ...(alloyEnabled ? { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318' } : {}),
+        ...(ordersEnabled
+          ? {
+              ORDERS_MCP_URL_LAGUNA_ESCONDIDA:
+                `http://laguna.${namespace.namespaceName}:${lagunaMcpPort}/mcp`,
+            }
+          : {}),
       },
       secrets: {
         ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(appSecret, 'ANTHROPIC_API_KEY'),
@@ -194,6 +217,16 @@ export class MarketingStack extends cdk.Stack {
           appSecret,
           'STAFF_WHATSAPP_LAGUNA_ESCONDIDA',
         ),
+        // Same value as MCP_CUSTOMER_AUTH_TOKEN in <projectName>/laguna/app: each
+        // task reads only its own secret.
+        ...(ordersEnabled
+          ? {
+              ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA: ecs.Secret.fromSecretsManager(
+                appSecret,
+                'ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA',
+              ),
+            }
+          : {}),
       },
     });
 
@@ -209,5 +242,20 @@ export class MarketingStack extends cdk.Stack {
       // NB: SG rule descriptions reject '>' — keep it to the allowed charset.
       'whatsapp-agent to postgres',
     );
+
+    if (ordersEnabled) {
+      // Re-imported so the rule lands in this (consuming) stack, like the DB rule.
+      const lagunaSgLocal = ec2.SecurityGroup.fromSecurityGroupId(
+        this,
+        'LagunaSgImport',
+        lagunaSecurityGroup.securityGroupId,
+        { allowAllOutbound: false, mutable: true },
+      );
+      lagunaSgLocal.addIngressRule(
+        agent.securityGroup,
+        ec2.Port.tcp(lagunaMcpPort),
+        'whatsapp-agent to laguna customer MCP',
+      );
+    }
   }
 }

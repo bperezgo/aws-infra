@@ -37,6 +37,9 @@ export interface ServicesStackProps extends cdk.StackProps {
 }
 
 export class ServicesStack extends cdk.Stack {
+  /** laguna's task SG; consumers re-import it to add their own ingress. */
+  public readonly lagunaSecurityGroup: ec2.ISecurityGroup;
+
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
 
@@ -227,6 +230,56 @@ export class ServicesStack extends cdk.Stack {
         CDN_PRIVATE_KEY: ecs.Secret.fromSecretsManager(lagunaCfSecret),
       },
     });
+
+    // --- Customer MCP server (sidecar) ---
+    // The WhatsApp agent takes takeaway/delivery orders through the backend's MCP
+    // server (cmd/mcp-server) with MCP_TOOLSET=customer: only the 7 customer
+    // tools, signed in as a user holding ONLY the `agent` role, so neither the
+    // toolset nor a leaked credential reaches staff endpoints. Same image and
+    // release as the app (the binary ships at /app/mcp-server), talking to it over
+    // task loopback. Listens on :8090 on the task ENI — the task has a public IP,
+    // so the security group is the boundary: MarketingStack opens 8090 to the
+    // agent's SG only, and every /mcp call also needs the bearer token.
+    // Non-essential: an MCP crash costs the agent its orders tools (it degrades
+    // to answering without them), never the POS backend.
+    // Keys to add to <projectName>/laguna/app before deploying:
+    //   MCP_CUSTOMER_USERNAME / MCP_CUSTOMER_PASSWORD — the agent-role user
+    //   MCP_CUSTOMER_AUTH_TOKEN — shared bearer (same value as the agent's
+    //     ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA in <projectName>/whatsapp-agent/app)
+    // Needs a laguna image that ships the binary. Skip with -c lagunaMcp=off.
+    const mcpEnabled = this.node.tryGetContext('lagunaMcp') !== 'off';
+    if (mcpEnabled) {
+      laguna.taskDefinition.addContainer('mcp-customer', {
+        image: ecs.ContainerImage.fromEcrRepository(ecr.laguna, imageTags.laguna),
+        command: ['./mcp-server'],
+        essential: false,
+        memoryLimitMiB: 128,
+        portMappings: [{ containerPort: 8090 }],
+        environment: {
+          MCP_TOOLSET: 'customer',
+          MCP_ADDR: ':8090',
+          LAGUNA_API_URL: 'http://127.0.0.1:8080',
+        },
+        secrets: {
+          LAGUNA_USERNAME: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_USERNAME'),
+          LAGUNA_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_PASSWORD'),
+          MCP_AUTH_TOKEN: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_AUTH_TOKEN'),
+        },
+        logging: ecs.LogDrivers.awsLogs({
+          logGroup: laguna.logGroup,
+          streamPrefix: 'mcp-customer',
+        }),
+        // Alpine runtime: busybox wget, no curl. /health is unauthenticated.
+        healthCheck: {
+          command: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8090/health || exit 1'],
+          interval: cdk.Duration.seconds(30),
+          timeout: cdk.Duration.seconds(5),
+          retries: 3,
+          startPeriod: cdk.Duration.seconds(30),
+        },
+      });
+    }
+    this.lagunaSecurityGroup = laguna.securityGroup;
 
     // Grant laguna read/write access to the assets bucket via task role —
     // no explicit AWS credentials needed in the app; the SDK picks up the role.

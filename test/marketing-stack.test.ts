@@ -212,6 +212,28 @@ describe('MarketingStack — whatsapp-agent service', () => {
     });
   });
 
+  test('takes laguna orders through the customer MCP sidecar, by Cloud Map name', () => {
+    const app = container(template, 'app');
+    assert.equal(
+      literal(envOf(app).ORDERS_MCP_URL_LAGUNA_ESCONDIDA),
+      'http://laguna.bryan-test.local:8090/mcp',
+    );
+    assert.ok(secretNames(app).includes('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA'));
+    assert.ok(!('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA' in envOf(app)));
+  });
+
+  test('opens the MCP port (8090) on laguna to this service only', () => {
+    // laguna runs in a public subnet with a public IP: the SG is what keeps the
+    // MCP listener off the internet, so the source must be the agent's SG.
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: 'tcp',
+      FromPort: 8090,
+      ToPort: 8090,
+      SourceSecurityGroupId: Match.anyValue(),
+      CidrIp: Match.absent(),
+    });
+  });
+
   test('log group is /ecs/whatsapp-agent', () => {
     template.hasResourceProperties('AWS::Logs::LogGroup', {
       LogGroupName: '/ecs/whatsapp-agent',
@@ -237,6 +259,16 @@ describe('MarketingStack — escape hatches', () => {
   test('whatsappAgentTunnel=off drops cloudflared', () => {
     const { template } = synthMarketing({ whatsappAgentTunnel: 'off' });
     assert.ok(!containers(template).some((c) => c.Name === 'cloudflared'));
+  });
+
+  test('whatsappAgentOrders=off drops the orders backend and its ingress', () => {
+    // The agent then logs a warning and takes no orders (marketing-app design D4).
+    const { template } = synthMarketing({ whatsappAgentOrders: 'off' });
+    const app = container(template, 'app');
+    assert.ok(!('ORDERS_MCP_URL_LAGUNA_ESCONDIDA' in envOf(app)));
+    assert.ok(!secretNames(app).includes('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA'));
+    const rules = Object.values(template.findResources('AWS::EC2::SecurityGroupIngress'));
+    assert.ok(!rules.some((r: any) => r.Properties.FromPort === 8090));
   });
 
   test('whatsappAgentDesiredCount=0 parks the service', () => {

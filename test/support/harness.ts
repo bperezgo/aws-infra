@@ -113,6 +113,18 @@ export function synthMarketing(
 ): { stack: MarketingStack; template: Template } {
   const app = new cdk.App({ context });
   const { network, data, ecr } = foundation(app);
+  const services = new ServicesStack(app, `${TEST_PROJECT}-services`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+    vpc: network.vpc,
+    cluster: network.cluster,
+    namespace: network.namespace,
+    database: data.database,
+    dbSecurityGroup: data.dbSecurityGroup,
+    ecr,
+    assetsBucket: data.assetsBucket,
+    imageTags: TEST_IMAGE_TAGS,
+  });
   const stack = new MarketingStack(app, `${TEST_PROJECT}-marketing`, {
     env: TEST_ENV,
     projectName: TEST_PROJECT,
@@ -121,6 +133,7 @@ export function synthMarketing(
     namespace: network.namespace,
     database: data.database,
     dbSecurityGroup: data.dbSecurityGroup,
+    lagunaSecurityGroup: services.lagunaSecurityGroup,
     ecr,
     imageTags: TEST_IMAGE_TAGS,
   });
