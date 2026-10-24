@@ -23,6 +23,9 @@
 
     "_comment_tailscaleAuthKeyArn": "Optional. When set, deploys a Tailscale subnet router EC2 for local DBeaver→RDS access. See docs/tailscale-db-access.md.",
     "_comment_tailscaleAuthKeyArn_example": "\"tailscaleAuthKeyArn\": \"arn:aws:secretsmanager:us-east-1:123456789012:secret:bryan-dev/tailscale/auth-key-XXXXXX\"",
+    "_comment_lagunaMcp": "Customer MCP sidecar (whatsapp-agent orders). Off until its cloud sign-in sends the organization (backend v1.2.0 requires it).",
+    "lagunaMcp": "off",
+
     "tailscaleAuthKeyArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:bryan-dev/tailscale/auth-key-XXXXXX"
   }
 }

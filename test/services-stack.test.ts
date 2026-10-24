@@ -182,6 +182,43 @@ describe('ServicesStack — laguna', () => {
 // ENI, edge telemetry silently entering the cloud service's own pipeline (and so
 // wearing its labels), or an unbounded queue OOM-killing a sidecar that is
 // non-essential and therefore dies quietly.
+// Backend v1.2.0 made the cloud multi-tenant: the organization comes from each caller,
+// and config.NewConfig(cloud) refuses to boot on the old single-tenant env.
+describe('ServicesStack — multi-tenant cloud config', () => {
+  const { template } = synthServices();
+
+  const app = (t = template) =>
+    (Object.values(t.findResources('AWS::ECS::TaskDefinition'))[0] as any).Properties
+      .ContainerDefinitions.find((c: any) => c.Name === 'app');
+  const envOf = (t = template): Record<string, string> =>
+    Object.fromEntries(app(t).Environment.map((e: any) => [e.Name, e.Value]));
+  const secretNames = (t = template): string[] => app(t).Secrets.map((s: any) => s.Name);
+
+  test('ORGANIZATION_ID is not set: the cloud fatals if it is', () => {
+    assert.ok(!('ORGANIZATION_ID' in envOf()));
+    assert.ok(!secretNames().includes('ORGANIZATION_ID'));
+  });
+
+  test('NODE_ID is the cloud id Laguna\'s box derives, so its sync_state stays valid', () => {
+    // uuid5(NAMESPACE_URL, "laguna-escondida/node/<laguna org>/cloud")
+    assert.equal(envOf().NODE_ID, '45598059-e12e-530c-86b6-758477c4423d');
+  });
+
+  test('relayed edge telemetry lands in Laguna\'s tenant (required with the forward URL)', () => {
+    assert.equal(envOf().TELEMETRY_TENANT_ID, 'bb0cad3e-be13-4bad-9a37-bba9525bfece');
+  });
+
+  test('no tenant id without the relay', () => {
+    const { template: noAlloy } = synthServices({ lagunaAlloy: 'off' });
+    assert.ok(!('TELEMETRY_TENANT_ID' in envOf(noAlloy)));
+  });
+
+  test('invoice prefixes are per-organization rows now, not env', () => {
+    assert.ok(!secretNames().includes('ELECTRONIC_INVOICE_PREFIX'));
+    assert.ok(!secretNames().includes('SUPPORT_DOCUMENT_PREFIX'));
+  });
+});
+
 describe('ServicesStack — edge telemetry relay', () => {
   const { template } = synthServices();
 

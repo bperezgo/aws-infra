@@ -11,6 +11,12 @@ import { Construct } from 'constructs';
 import { EcsService } from '../constructs/ecs-service';
 import { EcrStack } from './ecr-stack';
 
+// Laguna's organization (backend migration 33). Not secret.
+const LAGUNA_ORGANIZATION_ID = 'bb0cad3e-be13-4bad-9a37-bba9525bfece';
+// uuid5(NAMESPACE_URL, "laguna-escondida/node/<LAGUNA_ORGANIZATION_ID>/cloud"): the
+// cloud id an edge box derives by default (backend config.CloudNodeIDFor).
+const LAGUNA_CLOUD_NODE_ID = '45598059-e12e-530c-86b6-758477c4423d';
+
 export interface ServicesStackProps extends cdk.StackProps {
   projectName: string;
   vpc: ec2.IVpc;
@@ -201,9 +207,18 @@ export class ServicesStack extends cdk.Stack {
         // the sidecar: with `-c lagunaAlloy=off` the backend must NOT register
         // the ingest routes, or every edge POST forwards into a void, 502s, and
         // the boxes spin on retry. Unsetting this is also the rollback switch.
+        // TELEMETRY_TENANT_ID (the Grafana tenant relayed telemetry lands in) is required
+        // with it since the cloud went multi-tenant; it used to default to the org.
         ...(alloyEnabled
-          ? { TELEMETRY_FORWARD_URL: 'http://127.0.0.1:4319' }
+          ? {
+              TELEMETRY_FORWARD_URL: 'http://127.0.0.1:4319',
+              TELEMETRY_TENANT_ID: LAGUNA_ORGANIZATION_ID,
+            }
           : {}),
+        // Multi-tenant cloud (backend v1.2.0+): no ORGANIZATION_ID (the org comes from
+        // each caller; setting it is a boot error), and NODE_ID must be set. It keeps the
+        // id Laguna's box derives for the cloud, or the box's sync_state goes stale.
+        NODE_ID: LAGUNA_CLOUD_NODE_ID,
       },
       secrets: {
         // DB creds are the app-scoped role `laguna_app` (created by
@@ -219,12 +234,9 @@ export class ServicesStack extends cdk.Stack {
         ELECTRONIC_INVOICE_URL: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_URL'),
         ELECTRONIC_INVOICE_USER: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_USER'),
         ELECTRONIC_INVOICE_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PASSWORD'),
-        ELECTRONIC_INVOICE_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ELECTRONIC_INVOICE_PREFIX'),
-        SUPPORT_DOCUMENT_PREFIX: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'SUPPORT_DOCUMENT_PREFIX'),
         STORAGE_BUCKET: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'STORAGE_BUCKET'),
         STORAGE_REGION: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'STORAGE_REGION'),
         CDN_URL: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'CDN_URL'),
-        ORGANIZATION_ID: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'ORGANIZATION_ID'),
         NODE_SYNC_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NODE_SYNC_KEY'),
         // Raw PEM — entire secret value, no JSON field.
         CDN_PRIVATE_KEY: ecs.Secret.fromSecretsManager(lagunaCfSecret),
