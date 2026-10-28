@@ -97,7 +97,7 @@ export class ConsoleStack extends cdk.Stack {
       healthCheckCommand: ['/app/console-api', 'healthcheck'],
       // Reached only through the tunnel; nothing resolves it inside the VPC.
       cloudMap: false,
-      // PRODUCTS_DIR and CONSOLE_WEB_DIR come from the image.
+      // CONSOLE_WEB_DIR comes from the image.
       environment: {
         PORT: String(port),
         DATABASE_URL: databaseUrl,
@@ -113,6 +113,9 @@ export class ConsoleStack extends cdk.Stack {
           appSecret,
           'CONSOLE_PROVISION_TOKEN',
         ),
+        // Seals tool-server tokens and channel secrets; only whatsapp-agent holds
+        // the private half, so the console can never read one back.
+        SECRETS_PUBLIC_KEY: ecs.Secret.fromSecretsManager(appSecret, 'SECRETS_PUBLIC_KEY'),
       },
     });
 

@@ -102,6 +102,13 @@ describe('ConsoleStack — console-api service', () => {
     assert.ok(!('CONSOLE_PROVISION_TOKEN' in envOf(app)));
   });
 
+  test('seals tool-server and channel secrets with the public half only', () => {
+    const app = container(template, 'app');
+    assert.ok(secretNames(app).includes('SECRETS_PUBLIC_KEY'));
+    // whatsapp-agent alone can open what the console seals.
+    assert.ok(!secretNames(app).includes('SECRETS_PRIVATE_KEY'));
+  });
+
   test('throttles sign-in by the client address Cloudflare reports', () => {
     // Every connection arrives from cloudflared on loopback.
     assert.equal(

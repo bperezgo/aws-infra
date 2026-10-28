@@ -184,7 +184,7 @@ export class MarketingStack extends cdk.Stack {
       environment: {
         PORT: '8080',
         DATABASE_URL: databaseUrl,
-        PRODUCT_READINESS: readiness,
+        ASSISTANT_READINESS: readiness,
         LOG_LEVEL: 'info',
         // Customer message text stays in Postgres under its retention window and
         // never reaches a telemetry backend.
@@ -209,6 +209,10 @@ export class MarketingStack extends cdk.Stack {
         WHATSAPP_VERIFY_TOKEN: ecs.Secret.fromSecretsManager(appSecret, 'WHATSAPP_VERIFY_TOKEN'),
         WHATSAPP_APP_SECRET: ecs.Secret.fromSecretsManager(appSecret, 'WHATSAPP_APP_SECRET'),
         PGPASSWORD: ecs.Secret.fromSecretsManager(appSecret, 'DB_PASSWORD'),
+        // Opens the tool-server tokens and channel secrets the console seals with
+        // the public half (make secrets-keygen in marketing-app). Comma-separated
+        // while a key is being rotated out.
+        SECRETS_PRIVATE_KEY: ecs.Secret.fromSecretsManager(appSecret, 'SECRETS_PRIVATE_KEY'),
         // Optional to the app (it falls back to its own model and to the public
         // contact), but once named here the keys must exist in the secret.
         CLAUDE_MODEL: ecs.Secret.fromSecretsManager(appSecret, 'CLAUDE_MODEL'),

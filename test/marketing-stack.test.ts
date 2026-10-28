@@ -132,6 +132,12 @@ describe('MarketingStack — whatsapp-agent service', () => {
     }
   });
 
+  test('opens sealed tool-server and channel secrets with the private key, a secret', () => {
+    const app = container(template, 'app');
+    assert.ok(secretNames(app).includes('SECRETS_PRIVATE_KEY'));
+    assert.ok(!('SECRETS_PRIVATE_KEY' in envOf(app)));
+  });
+
   test('app holds no telemetry-backend credentials (Alloy does)', () => {
     const names = secretNames(container(template, 'app')).join(',');
     assert.doesNotMatch(names, /GRAFANA|LANGFUSE/);
@@ -139,7 +145,9 @@ describe('MarketingStack — whatsapp-agent service', () => {
 
   test('fails safe on customer data: serve readiness, no content in telemetry', () => {
     const env = envOf(container(template, 'app'));
-    assert.equal(env.PRODUCT_READINESS, 'serve');
+    assert.equal(env.ASSISTANT_READINESS, 'serve');
+    // Renamed in marketing-app v0.0.6; the old name would be silently ignored.
+    assert.ok(!('PRODUCT_READINESS' in env));
     assert.equal(env.TELEMETRY_CONTENT, 'none');
     assert.equal(env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, 'false');
   });
@@ -278,7 +286,7 @@ describe('MarketingStack — escape hatches', () => {
 
   test('whatsappAgentReadiness only accepts serve|develop', () => {
     const { template } = synthMarketing({ whatsappAgentReadiness: 'develop' });
-    assert.equal(envOf(container(template, 'app')).PRODUCT_READINESS, 'develop');
+    assert.equal(envOf(container(template, 'app')).ASSISTANT_READINESS, 'develop');
     assert.throws(() => synthMarketing({ whatsappAgentReadiness: 'yolo' }), /serve|develop/);
   });
 });
