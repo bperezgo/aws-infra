@@ -17,7 +17,7 @@ export const TEST_IMAGE_TAGS = {
   laguna: 'v1.1.9',
   whatsappAgent: 'v0.1.0',
   consoleApi: 'v0.2.0',
-  cloudflared: '2026.7.1',
+  cloudflared: '2026.10.3',
   alloy: 'v1.18.1',
 };
 
