@@ -339,8 +339,8 @@ describe('ServicesStack — edge telemetry relay', () => {
 // customer) the WhatsApp agent takes orders through. A sidecar of the laguna task:
 // same image and release as the backend it fronts, reached over task loopback,
 // no extra task or public IP. Its safety rests on three things pinned here: only
-// the customer toolset, the `agent`-role credentials and the bearer token as
-// secrets, and no way for it to take the backend down with it.
+// the customer toolset, no identity of its own (callers bring their organization
+// API key), and no way for it to take the backend down with it.
 describe('ServicesStack — customer MCP sidecar', () => {
   const { template } = synthServices();
 
@@ -380,14 +380,14 @@ describe('ServicesStack — customer MCP sidecar', () => {
     assert.deepEqual(mcp().PortMappings?.map((p) => p.ContainerPort), [8090]);
   });
 
-  test('agent credentials and bearer token are secrets, never plaintext env', () => {
-    const names = (mcp().Secrets ?? []).map((s) => s.Name);
-    for (const name of ['LAGUNA_USERNAME', 'LAGUNA_PASSWORD', 'MCP_AUTH_TOKEN']) {
-      assert.ok(names.includes(name), `${name} must be a secret`);
-      assert.ok(!(name in env(mcp())), `${name} must not be plaintext env`);
+  test('holds no identity: each caller brings its organization API key', () => {
+    // Backend v1.2.1+: the customer toolset never signs in and ignores
+    // LAGUNA_USERNAME/PASSWORD and MCP_AUTH_TOKEN; the agent's `Bearer lgk_…` is
+    // forwarded to the backend, which decides the organization.
+    assert.deepEqual(mcp().Secrets ?? [], []);
+    for (const name of ['LAGUNA_USERNAME', 'LAGUNA_EMAIL', 'LAGUNA_PASSWORD', 'MCP_AUTH_TOKEN', 'LAGUNA_ADMIN_API_KEY']) {
+      assert.ok(!(name in env(mcp())), `${name} must not be set`);
     }
-    // The admin key unlocks admin-only endpoints the customer toolset never calls.
-    assert.ok(!names.includes('LAGUNA_ADMIN_API_KEY'));
   });
 
   test('is non-essential and capped, so it can never take laguna down', () => {

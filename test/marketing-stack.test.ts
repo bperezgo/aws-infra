@@ -220,14 +220,12 @@ describe('MarketingStack — whatsapp-agent service', () => {
     });
   });
 
-  test('takes laguna orders through the customer MCP sidecar, by Cloud Map name', () => {
+  test('no static orders env: tool servers live in the console DB', () => {
+    // v0.0.7+ reads tool-server URLs and sealed tokens from the database; the old
+    // ORDERS_MCP_* env is dead.
     const app = container(template, 'app');
-    assert.equal(
-      literal(envOf(app).ORDERS_MCP_URL_LAGUNA_ESCONDIDA),
-      'http://laguna.bryan-test.local:8090/mcp',
-    );
-    assert.ok(secretNames(app).includes('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA'));
-    assert.ok(!('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA' in envOf(app)));
+    assert.ok(!Object.keys(envOf(app)).some((k) => k.startsWith('ORDERS_MCP')));
+    assert.ok(!secretNames(app).some((k) => k.startsWith('ORDERS_MCP')));
   });
 
   test('opens the MCP port (8090) on laguna to this service only', () => {
@@ -269,12 +267,8 @@ describe('MarketingStack — escape hatches', () => {
     assert.ok(!containers(template).some((c) => c.Name === 'cloudflared'));
   });
 
-  test('whatsappAgentOrders=off drops the orders backend and its ingress', () => {
-    // The agent then logs a warning and takes no orders (marketing-app design D4).
+  test('whatsappAgentOrders=off drops the ingress to laguna customer MCP', () => {
     const { template } = synthMarketing({ whatsappAgentOrders: 'off' });
-    const app = container(template, 'app');
-    assert.ok(!('ORDERS_MCP_URL_LAGUNA_ESCONDIDA' in envOf(app)));
-    assert.ok(!secretNames(app).includes('ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA'));
     const rules = Object.values(template.findResources('AWS::EC2::SecurityGroupIngress'));
     assert.ok(!rules.some((r: any) => r.Properties.FromPort === 8090));
   });

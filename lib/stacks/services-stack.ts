@@ -245,19 +245,18 @@ export class ServicesStack extends cdk.Stack {
 
     // --- Customer MCP server (sidecar) ---
     // The WhatsApp agent takes takeaway/delivery orders through the backend's MCP
-    // server (cmd/mcp-server) with MCP_TOOLSET=customer: only the 7 customer
-    // tools, signed in as a user holding ONLY the `agent` role, so neither the
-    // toolset nor a leaked credential reaches staff endpoints. Same image and
-    // release as the app (the binary ships at /app/mcp-server), talking to it over
-    // task loopback. Listens on :8090 on the task ENI — the task has a public IP,
-    // so the security group is the boundary: MarketingStack opens 8090 to the
-    // agent's SG only, and every /mcp call also needs the bearer token.
+    // server (cmd/mcp-server) with MCP_TOOLSET=customer: only the customer
+    // tools. It holds no identity of its own (backend v1.2.1+): each caller sends
+    // its organization API key (`Bearer lgk_…`, issued for a user holding ONLY the
+    // `agent` role) and every backend call carries that key, so neither the
+    // toolset nor a leaked key reaches staff endpoints. The agent's key is the
+    // tool-server token set in the marketing console. Same image and release as
+    // the app (the binary ships at /app/mcp-server), talking to it over task
+    // loopback. Listens on :8090 on the task ENI — the task has a public IP, so
+    // the security group is the boundary: MarketingStack opens 8090 to the
+    // agent's SG only, and every /mcp call also needs an `lgk_` key.
     // Non-essential: an MCP crash costs the agent its orders tools (it degrades
     // to answering without them), never the POS backend.
-    // Keys to add to <projectName>/laguna/app before deploying:
-    //   MCP_CUSTOMER_USERNAME / MCP_CUSTOMER_PASSWORD — the agent-role user
-    //   MCP_CUSTOMER_AUTH_TOKEN — shared bearer (same value as the agent's
-    //     ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA in <projectName>/whatsapp-agent/app)
     // Needs a laguna image that ships the binary. Skip with -c lagunaMcp=off.
     const mcpEnabled = this.node.tryGetContext('lagunaMcp') !== 'off';
     if (mcpEnabled) {
@@ -271,11 +270,6 @@ export class ServicesStack extends cdk.Stack {
           MCP_TOOLSET: 'customer',
           MCP_ADDR: ':8090',
           LAGUNA_API_URL: 'http://127.0.0.1:8080',
-        },
-        secrets: {
-          LAGUNA_USERNAME: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_USERNAME'),
-          LAGUNA_PASSWORD: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_PASSWORD'),
-          MCP_AUTH_TOKEN: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'MCP_CUSTOMER_AUTH_TOKEN'),
         },
         logging: ecs.LogDrivers.awsLogs({
           logGroup: laguna.logGroup,

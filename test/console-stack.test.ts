@@ -53,6 +53,12 @@ describe('ConsoleStack — console-api service', () => {
     });
   });
 
+  test('accepts http tool servers, for VPC-internal Cloud Map URLs', () => {
+    // laguna's customer MCP is http://laguna.<ns>:8090/mcp inside the VPC; the
+    // console refuses plain http unless told otherwise.
+    assert.equal(literal(envOf(container(template, 'app')).CONSOLE_ALLOW_HTTP_TOOLS), 'true');
+  });
+
   test('is not registered in Cloud Map (reached only through the tunnel)', () => {
     template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);
     template.hasResourceProperties('AWS::ECS::Service', {

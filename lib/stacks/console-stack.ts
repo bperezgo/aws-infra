@@ -102,6 +102,10 @@ export class ConsoleStack extends cdk.Stack {
         PORT: String(port),
         DATABASE_URL: databaseUrl,
         LOG_LEVEL: 'info',
+        // Tool servers inside the VPC are plain http by Cloud Map name (laguna's
+        // customer MCP: http://laguna.<namespace>:8090/mcp); their tokens never
+        // leave the VPC, and the SG on the far end admits only the agent.
+        CONSOLE_ALLOW_HTTP_TOOLS: 'true',
         // Behind the tunnel every connection comes from cloudflared on loopback,
         // so the per-source sign-in throttle would lump all clients together.
         // Safe to trust: the SG takes no inbound, so only cloudflared reaches it.

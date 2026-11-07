@@ -93,9 +93,9 @@ export class MarketingStack extends cdk.Stack {
     // Langfuse out of production without anything failing.
     const langfuseEnabled = alloyEnabled && ctx('whatsappAgentLangfuse') !== 'off';
     // laguna's orders backend: the customer MCP sidecar in laguna's task
-    // (ServicesStack, port 8090), by its Cloud Map name. The agent only uses it
-    // for a product whose profile has `abilities: [orders]`. Off: the agent
-    // logs a warning and takes no orders.
+    // (ServicesStack, port 8090). The agent reads its URL and sealed token from
+    // the console (a tool server, http://laguna.<namespace>:8090/mcp), so this
+    // stack only opens the port. Off: no ingress, the server shows unreachable.
     const ordersEnabled = ctx('whatsappAgentOrders') !== 'off';
     const lagunaMcpPort = 8090;
     // serve refuses to start a product whose facts are stand-ins. develop is for a
@@ -196,12 +196,6 @@ export class MarketingStack extends cdk.Stack {
           `service.version=${imageTags.whatsappAgent}`,
         // Unset means no telemetry at all in this app, so it follows the sidecar.
         ...(alloyEnabled ? { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318' } : {}),
-        ...(ordersEnabled
-          ? {
-              ORDERS_MCP_URL_LAGUNA_ESCONDIDA:
-                `http://laguna.${namespace.namespaceName}:${lagunaMcpPort}/mcp`,
-            }
-          : {}),
       },
       secrets: {
         ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(appSecret, 'ANTHROPIC_API_KEY'),
@@ -221,16 +215,6 @@ export class MarketingStack extends cdk.Stack {
           appSecret,
           'STAFF_WHATSAPP_LAGUNA_ESCONDIDA',
         ),
-        // Same value as MCP_CUSTOMER_AUTH_TOKEN in <projectName>/laguna/app: each
-        // task reads only its own secret.
-        ...(ordersEnabled
-          ? {
-              ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA: ecs.Secret.fromSecretsManager(
-                appSecret,
-                'ORDERS_MCP_TOKEN_LAGUNA_ESCONDIDA',
-              ),
-            }
-          : {}),
       },
     });
 
