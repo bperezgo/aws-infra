@@ -110,11 +110,8 @@ function foundation(app: cdk.App) {
   return { network, data, ecr };
 }
 
-export function synthMarketing(
-  context: Record<string, unknown> = {},
-): { stack: MarketingStack; template: Template } {
-  const app = new cdk.App({ context });
-  const { network, data, ecr } = foundation(app);
+/** MarketingStack and what it consumes, wired like bin/app.ts. */
+function marketingOn(app: cdk.App, { network, data, ecr }: ReturnType<typeof foundation>) {
   const services = new ServicesStack(app, `${TEST_PROJECT}-services`, {
     env: TEST_ENV,
     projectName: TEST_PROJECT,
@@ -139,6 +136,14 @@ export function synthMarketing(
     ecr,
     imageTags: TEST_IMAGE_TAGS,
   });
+  return stack;
+}
+
+export function synthMarketing(
+  context: Record<string, unknown> = {},
+): { stack: MarketingStack; template: Template } {
+  const app = new cdk.App({ context });
+  const stack = marketingOn(app, foundation(app));
   return { stack, template: Template.fromStack(stack) };
 }
 
@@ -146,7 +151,9 @@ export function synthConsole(
   context: Record<string, unknown> = {},
 ): { stack: ConsoleStack; template: Template } {
   const app = new cdk.App({ context });
-  const { network, data, ecr } = foundation(app);
+  const base = foundation(app);
+  const { network, data, ecr } = base;
+  const marketing = marketingOn(app, base);
   const stack = new ConsoleStack(app, `${TEST_PROJECT}-console`, {
     env: TEST_ENV,
     projectName: TEST_PROJECT,
@@ -155,6 +162,7 @@ export function synthConsole(
     namespace: network.namespace,
     database: data.database,
     dbSecurityGroup: data.dbSecurityGroup,
+    agentSecurityGroup: marketing.agentSecurityGroup,
     ecr,
     imageTags: TEST_IMAGE_TAGS,
   });

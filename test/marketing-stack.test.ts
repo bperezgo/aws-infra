@@ -73,13 +73,16 @@ describe('MarketingStack — whatsapp-agent service', () => {
     });
   });
 
-  test('is not registered in Cloud Map (nothing calls it inside the VPC)', () => {
-    // Meta reaches it through the tunnel. A registration would also make every
-    // deploy wait on the Cloud Map instance turning healthy.
-    template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);
+  test('is registered in Cloud Map as whatsapp-agent, for console-api', () => {
+    // console-api calls its internal API at http://whatsapp-agent.<ns>:8080.
+    // The registration only turns healthy through the container health check,
+    // so the two go together: without the check every deploy hangs (CLAUDE.md).
+    template.resourceCountIs('AWS::ServiceDiscovery::Service', 1);
+    template.hasResourceProperties('AWS::ServiceDiscovery::Service', { Name: 'whatsapp-agent' });
     template.hasResourceProperties('AWS::ECS::Service', {
-      ServiceRegistries: Match.absent(),
+      ServiceRegistries: Match.arrayWith([Match.objectLike({ RegistryArn: Match.anyValue() })]),
     });
+    // The health check itself: 'app health check runs the binary itself'.
   });
 
   test('task def is 256 CPU / 1024 MB with sidecars', () => {
@@ -136,6 +139,23 @@ describe('MarketingStack — whatsapp-agent service', () => {
     const app = container(template, 'app');
     assert.ok(secretNames(app).includes('SECRETS_PRIVATE_KEY'));
     assert.ok(!('SECRETS_PRIVATE_KEY' in envOf(app)));
+  });
+
+  test('signs staff device alerts with the VAPID keys, from the secret', () => {
+    // marketing-app v0.0.10: web push on handoffs. Unset, no device is alerted.
+    const app = container(template, 'app');
+    const env = envOf(app);
+    for (const name of ['WEBPUSH_VAPID_PRIVATE_KEY', 'WEBPUSH_VAPID_PUBLIC_KEY', 'WEBPUSH_SUBJECT']) {
+      assert.ok(secretNames(app).includes(name), `${name} must be injected from the secret`);
+      assert.ok(!(name in env), `${name} must not be plaintext env`);
+    }
+  });
+
+  test('links handoff notifications and device alerts to the console', () => {
+    // Unset, the agent warns and notifications carry no link.
+    const app = container(template, 'app');
+    assert.ok(secretNames(app).includes('CONSOLE_BASE_URL'));
+    assert.ok(!('CONSOLE_BASE_URL' in envOf(app)));
   });
 
   test('app holds no telemetry-backend credentials (Alloy does)', () => {

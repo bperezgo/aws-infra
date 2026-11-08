@@ -67,6 +67,9 @@ export function whatsappAgentAlloyConfig(langfuse: boolean): string {
  * image: the service refuses to boot on an unmigrated database.
  */
 export class MarketingStack extends cdk.Stack {
+  /** The agent's task SG: ConsoleStack opens 8080 on it for its internal API. */
+  public readonly agentSecurityGroup: ec2.ISecurityGroup;
+
   constructor(scope: Construct, id: string, props: MarketingStackProps) {
     super(scope, id, props);
 
@@ -116,7 +119,9 @@ export class MarketingStack extends cdk.Stack {
     //   aws secretsmanager create-secret --name <projectName>/whatsapp-agent/app \
     //     --secret-string '{"ANTHROPIC_API_KEY":"…","WHATSAPP_ACCESS_TOKEN":"…",
     //       "WHATSAPP_VERIFY_TOKEN":"…","WHATSAPP_APP_SECRET":"…","DB_PASSWORD":"…",
-    //       "CLAUDE_MODEL":"…","CLAUDE_EFFORT":"…","STAFF_WHATSAPP_LAGUNA_ESCONDIDA":"…"}'
+    //       "CLAUDE_MODEL":"…","CLAUDE_EFFORT":"…","STAFF_WHATSAPP_LAGUNA_ESCONDIDA":"…",
+    //       "WEBPUSH_VAPID_PRIVATE_KEY":"…","WEBPUSH_VAPID_PUBLIC_KEY":"…","WEBPUSH_SUBJECT":"…",
+    //       "CONSOLE_BASE_URL":"https://…"}'
     // DB_PASSWORD is marketing_svc's — the db-admin task sets the role from it.
     const appSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -179,8 +184,11 @@ export class MarketingStack extends cdk.Stack {
       // task that recovers by itself). Needs whatsapp-agent >= the release that
       // added the `healthcheck` subcommand.
       healthCheckCommand: ['/app/whatsapp-agent', 'healthcheck'],
-      // Reached only through the tunnel; nothing resolves it inside the VPC.
-      cloudMap: false,
+      // whatsapp-agent.<namespace>: console-api calls its internal API
+      // (/internal/handoffs/*) there. Safe only with the health check above —
+      // the Cloud Map instance turns healthy through it, or the deploy hangs.
+      // Meta still reaches the webhook through the tunnel.
+      cloudMap: true,
       environment: {
         PORT: '8080',
         DATABASE_URL: databaseUrl,
@@ -215,8 +223,25 @@ export class MarketingStack extends cdk.Stack {
           appSecret,
           'STAFF_WHATSAPP_LAGUNA_ESCONDIDA',
         ),
+        // Web push alerts to staff devices (marketing-app >= v0.0.10). A VAPID
+        // pair from `npx web-push generate-vapid-keys`; console-api holds the
+        // public half as CONSOLE_PUSH_PUBLIC_KEY. SUBJECT is the mailto: contact.
+        WEBPUSH_VAPID_PRIVATE_KEY: ecs.Secret.fromSecretsManager(
+          appSecret,
+          'WEBPUSH_VAPID_PRIVATE_KEY',
+        ),
+        WEBPUSH_VAPID_PUBLIC_KEY: ecs.Secret.fromSecretsManager(
+          appSecret,
+          'WEBPUSH_VAPID_PUBLIC_KEY',
+        ),
+        WEBPUSH_SUBJECT: ecs.Secret.fromSecretsManager(appSecret, 'WEBPUSH_SUBJECT'),
+        // The console's https address, which handoff notifications and device
+        // alerts link to. Not secret, but kept out of this public repo.
+        CONSOLE_BASE_URL: ecs.Secret.fromSecretsManager(appSecret, 'CONSOLE_BASE_URL'),
       },
     });
+
+    this.agentSecurityGroup = agent.securityGroup;
 
     const dbSgLocal = ec2.SecurityGroup.fromSecurityGroupId(
       this,

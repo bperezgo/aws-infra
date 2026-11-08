@@ -99,6 +99,7 @@ const consoleStack = new ConsoleStack(app, `${cfg.projectName}-console`, {
   namespace: network.namespace,
   database: data.database,
   dbSecurityGroup: data.dbSecurityGroup,
+  agentSecurityGroup: marketing.agentSecurityGroup,
   ecr,
   imageTags,
 });

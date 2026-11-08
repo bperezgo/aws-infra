@@ -16,6 +16,8 @@ export interface ConsoleStackProps extends cdk.StackProps {
   namespace: servicediscovery.IPrivateDnsNamespace;
   database: rds.DatabaseInstance;
   dbSecurityGroup: ec2.ISecurityGroup;
+  /** whatsapp-agent's task SG: console-api calls its internal API on 8080. */
+  agentSecurityGroup: ec2.ISecurityGroup;
   ecr: EcrStack;
   imageTags: {
     consoleApi: string;
@@ -44,8 +46,17 @@ export class ConsoleStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ConsoleStackProps) {
     super(scope, id, props);
 
-    const { projectName, vpc, cluster, namespace, database, dbSecurityGroup, ecr, imageTags } =
-      props;
+    const {
+      projectName,
+      vpc,
+      cluster,
+      namespace,
+      database,
+      dbSecurityGroup,
+      agentSecurityGroup,
+      ecr,
+      imageTags,
+    } = props;
 
     const ctx = (key: string): string | undefined => {
       const v = this.node.tryGetContext(key);
@@ -53,12 +64,18 @@ export class ConsoleStack extends cdk.Stack {
     };
     const desiredCount = Number(ctx('consoleDesiredCount') ?? 1);
     const tunnelEnabled = ctx('consoleTunnel') !== 'off';
+    // Staff replies and handbacks go to the agent's internal API, inside the VPC
+    // by its Cloud Map name. Each call carries the editor's own session, which
+    // the agent resolves: no shared secret. Off: no URL, and replying answers 503.
+    const agentApiEnabled = ctx('consoleAgentApi') !== 'off';
+    const agentPort = 8080;
     const port = 8090;
 
-    // What the running app reads. Create once (both keys must exist or the task
+    // What the running app reads. Create once (all keys must exist or the task
     // fails to start):
     //   aws secretsmanager create-secret --name <projectName>/console-api/app \
-    //     --secret-string '{"DB_PASSWORD":"…","CONSOLE_PROVISION_TOKEN":"…"}'
+    //     --secret-string '{"DB_PASSWORD":"…","CONSOLE_PROVISION_TOKEN":"…",
+    //       "SECRETS_PUBLIC_KEY":"…","CONSOLE_PUSH_PUBLIC_KEY":"…"}'
     // DB_PASSWORD is marketing_console_svc's — the db-admin task sets the role from it.
     const appSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -110,6 +127,9 @@ export class ConsoleStack extends cdk.Stack {
         // so the per-source sign-in throttle would lump all clients together.
         // Safe to trust: the SG takes no inbound, so only cloudflared reaches it.
         ...(tunnelEnabled ? { CONSOLE_CLIENT_IP_HEADER: 'CF-Connecting-IP' } : {}),
+        ...(agentApiEnabled
+          ? { AGENT_INTERNAL_URL: `http://whatsapp-agent.${namespace.namespaceName}:${agentPort}` }
+          : {}),
       },
       secrets: {
         PGPASSWORD: ecs.Secret.fromSecretsManager(appSecret, 'DB_PASSWORD'),
@@ -120,6 +140,12 @@ export class ConsoleStack extends cdk.Stack {
         // Seals tool-server tokens and channel secrets; only whatsapp-agent holds
         // the private half, so the console can never read one back.
         SECRETS_PUBLIC_KEY: ecs.Secret.fromSecretsManager(appSecret, 'SECRETS_PUBLIC_KEY'),
+        // The VAPID public key browsers subscribe to device alerts with: the
+        // agent's WEBPUSH_VAPID_PUBLIC_KEY (marketing-app >= v0.0.10).
+        CONSOLE_PUSH_PUBLIC_KEY: ecs.Secret.fromSecretsManager(
+          appSecret,
+          'CONSOLE_PUSH_PUBLIC_KEY',
+        ),
       },
     });
 
@@ -130,5 +156,20 @@ export class ConsoleStack extends cdk.Stack {
       { allowAllOutbound: false, mutable: true },
     );
     dbSgLocal.addIngressRule(console.securityGroup, ec2.Port.tcp(5432), 'console-api to postgres');
+
+    if (agentApiEnabled) {
+      // Re-imported so the rule lands in this (consuming) stack, like the DB rule.
+      const agentSgLocal = ec2.SecurityGroup.fromSecurityGroupId(
+        this,
+        'AgentSgImport',
+        agentSecurityGroup.securityGroupId,
+        { allowAllOutbound: false, mutable: true },
+      );
+      agentSgLocal.addIngressRule(
+        console.securityGroup,
+        ec2.Port.tcp(agentPort),
+        'console-api to whatsapp-agent internal API',
+      );
+    }
   }
 }

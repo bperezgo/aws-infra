@@ -115,6 +115,13 @@ describe('ConsoleStack — console-api service', () => {
     assert.ok(!secretNames(app).includes('SECRETS_PRIVATE_KEY'));
   });
 
+  test('offers device alerts with the VAPID public key only', () => {
+    const app = container(template, 'app');
+    assert.ok(secretNames(app).includes('CONSOLE_PUSH_PUBLIC_KEY'));
+    // Only whatsapp-agent signs alerts.
+    assert.ok(!secretNames(app).includes('WEBPUSH_VAPID_PRIVATE_KEY'));
+  });
+
   test('throttles sign-in by the client address Cloudflare reports', () => {
     // Every connection arrives from cloudflared on loopback.
     assert.equal(
@@ -137,13 +144,41 @@ describe('ConsoleStack — console-api service', () => {
 
   test('accepts no inbound traffic of its own', () => {
     // The tunnel dials out; the task runs in a public subnet with a public IP, so
-    // an ingress rule would put /internal/provision on the internet.
+    // an ingress rule would put /internal/provision on the internet. The rules
+    // this stack adds are on imported SGs (Postgres, the agent), never its own.
     const sgs = Object.values(template.findResources('AWS::EC2::SecurityGroup'));
     for (const sg of sgs) {
       assert.equal((sg as any).Properties.SecurityGroupIngress, undefined);
     }
     const rules = Object.values(template.findResources('AWS::EC2::SecurityGroupIngress'));
-    assert.ok(rules.every((r: any) => r.Properties.FromPort === 5432));
+    assert.ok(rules.every((r: any) => [5432, 8080].includes(r.Properties.FromPort)));
+    assert.ok(rules.every((r: any) => 'Fn::ImportValue' in r.Properties.GroupId));
+  });
+
+  test('calls the agent inside the VPC, by its Cloud Map name', () => {
+    // Staff replies and handbacks: console-api forwards the editor's session to
+    // the agent's /internal/handoffs/*, never through the agent's tunnel.
+    const url = JSON.stringify(envOf(container(template, 'app')).AGENT_INTERNAL_URL);
+    assert.match(url, /http:\/\/whatsapp-agent\./);
+    assert.match(url, /:8080/);
+  });
+
+  test('authenticates to the agent with the user session, no shared secret', () => {
+    const app = container(template, 'app');
+    assert.ok(!secretNames(app).includes('AGENT_INTERNAL_SECRET'));
+    assert.ok(!('AGENT_INTERNAL_SECRET' in envOf(app)));
+  });
+
+  test('opens the agent (8080) to console-api only', () => {
+    // The agent runs in a public subnet with a public IP: the SG keeps 8080 off
+    // the internet, so the source must be console-api's SG.
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: 'tcp',
+      FromPort: 8080,
+      ToPort: 8080,
+      SourceSecurityGroupId: { 'Fn::GetAtt': [Match.stringLikeRegexp('^ConsoleApiSG'), 'GroupId'] },
+      CidrIp: Match.absent(),
+    });
   });
 
   test('log group is /ecs/console-api', () => {
@@ -155,6 +190,13 @@ describe('ConsoleStack — escape hatches', () => {
   test('consoleDesiredCount=0 parks the service', () => {
     const { template } = synthConsole({ consoleDesiredCount: 0 });
     template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0 });
+  });
+
+  test('consoleAgentApi=off drops the agent URL and its ingress', () => {
+    const { template } = synthConsole({ consoleAgentApi: 'off' });
+    assert.ok(!('AGENT_INTERNAL_URL' in envOf(container(template, 'app'))));
+    const rules = Object.values(template.findResources('AWS::EC2::SecurityGroupIngress'));
+    assert.ok(!rules.some((r: any) => r.Properties.FromPort === 8080));
   });
 
   test('consoleTunnel=off drops cloudflared and stops trusting its header', () => {
