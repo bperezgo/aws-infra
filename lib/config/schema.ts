@@ -27,6 +27,11 @@ export const ImageTagsSchema = z.object({
   laguna: z
     .string()
     .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
+  // laguna's operations UI image (laguna-escondida-backend/frontend). Released by
+  // the same v* tag as the backend, but its own key so the UI rolls on its own.
+  lagunaWeb: z
+    .string()
+    .regex(releaseTagPattern, 'must match vX.Y.Z (release tag) — "latest" not allowed'),
   // marketing-app release. One tag for both of its images (whatsapp-agent and
   // marketing-migrations) so the migrations that run always match the service.
   whatsappAgent: z

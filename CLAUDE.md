@@ -71,6 +71,10 @@ the aspect is the broad net; assertions pin the details.
 - **marketing-app migrations run before the service rolls**: bump tag → deploy
   `-dbadmin` → `scripts/db/migrate-marketing.sh` → deploy `-marketing`. The ops console
   (`-console`, its own `consoleApi` tag) follows the same rule: migrate first.
+- **laguna's UI runs here** (`-web` stack, `laguna-web` ECR repo, `lagunaWeb` tag; was Netlify).
+  Same `v*` release tag as laguna, own key. It only calls laguna server-side over Cloud Map
+  (`NEXT_PUBLIC_API_URL` is a runtime env, not inlined for the browser). Deploy `-services`
+  first when a release changes the API, then `-web`. Own tunnel + `<proj>/laguna-web/infra`.
 - **Tailscale stack is opt-in** via `tailscaleAuthKeyArn` context; it needs an SSM AMI lookup.
 - Docs under `docs/` are kept local — don't commit them.
 

@@ -11,6 +11,7 @@ export class EcrStack extends cdk.Stack {
   public readonly whatsappAgent: ecr.Repository;
   public readonly marketingMigrations: ecr.Repository;
   public readonly consoleApi: ecr.Repository;
+  public readonly lagunaWeb: ecr.Repository;
 
   constructor(scope: Construct, id: string, props: EcrStackProps) {
     super(scope, id, props);
@@ -45,6 +46,15 @@ export class EcrStack extends cdk.Stack {
     // marketing-app's operations console: console-api with the built console-web.
     this.consoleApi = new ecr.Repository(this, 'ConsoleApiRepo', {
       repositoryName: 'console-api',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      emptyOnDelete: false,
+      imageScanOnPush: true,
+      lifecycleRules: [{ maxImageCount: 10 }],
+    });
+
+    // laguna's operations UI (Next.js standalone), released with the backend's v* tag.
+    this.lagunaWeb = new ecr.Repository(this, 'LagunaWebRepo', {
+      repositoryName: 'laguna-web',
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       emptyOnDelete: false,
       imageScanOnPush: true,

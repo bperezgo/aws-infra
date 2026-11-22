@@ -6,6 +6,7 @@ import { EcrStack } from '../../lib/stacks/ecr-stack';
 import { ServicesStack } from '../../lib/stacks/services-stack';
 import { MarketingStack } from '../../lib/stacks/marketing-stack';
 import { ConsoleStack } from '../../lib/stacks/console-stack';
+import { LagunaWebStack } from '../../lib/stacks/laguna-web-stack';
 import { DbAdminStack } from '../../lib/stacks/db-admin-stack';
 import { CiStack } from '../../lib/stacks/ci-stack';
 
@@ -17,6 +18,7 @@ export const TEST_IMAGE_TAGS = {
   laguna: 'v1.1.9',
   whatsappAgent: 'v0.1.0',
   consoleApi: 'v0.2.0',
+  lagunaWeb: 'v1.1.9',
   cloudflared: '2026.10.3',
   alloy: 'v1.18.1',
 };
@@ -163,6 +165,37 @@ export function synthConsole(
     database: data.database,
     dbSecurityGroup: data.dbSecurityGroup,
     agentSecurityGroup: marketing.agentSecurityGroup,
+    ecr,
+    imageTags: TEST_IMAGE_TAGS,
+  });
+  return { stack, template: Template.fromStack(stack) };
+}
+
+export function synthLagunaWeb(
+  context: Record<string, unknown> = {},
+): { stack: LagunaWebStack; template: Template } {
+  const app = new cdk.App({ context });
+  const base = foundation(app);
+  const { network, data, ecr } = base;
+  const services = new ServicesStack(app, `${TEST_PROJECT}-services`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+    vpc: network.vpc,
+    cluster: network.cluster,
+    namespace: network.namespace,
+    database: data.database,
+    dbSecurityGroup: data.dbSecurityGroup,
+    ecr,
+    assetsBucket: data.assetsBucket,
+    imageTags: TEST_IMAGE_TAGS,
+  });
+  const stack = new LagunaWebStack(app, `${TEST_PROJECT}-web`, {
+    env: TEST_ENV,
+    projectName: TEST_PROJECT,
+    vpc: network.vpc,
+    cluster: network.cluster,
+    namespace: network.namespace,
+    lagunaSecurityGroup: services.lagunaSecurityGroup,
     ecr,
     imageTags: TEST_IMAGE_TAGS,
   });

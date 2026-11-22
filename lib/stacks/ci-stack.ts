@@ -45,7 +45,7 @@ export class CiStack extends cdk.Stack {
       provider,
       githubOwner,
       githubRepo: 'laguna-escondida-backend',
-      repositoryArns: [ecr.laguna.repositoryArn],
+      repositoryArns: [ecr.laguna.repositoryArn, ecr.lagunaWeb.repositoryArn],
     });
 
     new cdk.CfnOutput(this, 'LagunaPushRoleArn', {

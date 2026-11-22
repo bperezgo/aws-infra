@@ -1,7 +1,8 @@
 {
-  "laguna": "v1.2.4",
-  "whatsappAgent": "v0.0.14",
-  "consoleApi": "v0.0.14",
+  "laguna": "v1.2.5",
+  "lagunaWeb": "v1.2.5",
+  "whatsappAgent": "v0.0.16",
+  "consoleApi": "v0.0.16",
   "cloudflared": "2026.10.3",
   "alloy": "v1.18.1"
 }

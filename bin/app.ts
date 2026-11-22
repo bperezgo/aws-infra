@@ -10,6 +10,7 @@ import { CiStack } from '../lib/stacks/ci-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { DbAdminStack } from '../lib/stacks/db-admin-stack';
 import { MarketingStack } from '../lib/stacks/marketing-stack';
+import { LagunaWebStack } from '../lib/stacks/laguna-web-stack';
 import { ConsoleStack } from '../lib/stacks/console-stack';
 import { TailscaleStack } from '../lib/stacks/tailscale-stack';
 import { CostStack } from '../lib/stacks/cost-stack';
@@ -104,6 +105,20 @@ const consoleStack = new ConsoleStack(app, `${cfg.projectName}-console`, {
   imageTags,
 });
 cdk.Tags.of(consoleStack).add('Service', 'console');
+
+// laguna's operations UI (Next.js), replacing the Netlify site. Own stack so a UI
+// deploy never rolls the backend; it calls laguna over the VPC.
+const web = new LagunaWebStack(app, `${cfg.projectName}-web`, {
+  env,
+  projectName: cfg.projectName,
+  vpc: network.vpc,
+  cluster: network.cluster,
+  namespace: network.namespace,
+  lagunaSecurityGroup: services.lagunaSecurityGroup,
+  ecr,
+  imageTags,
+});
+cdk.Tags.of(web).add('Service', 'web');
 
 // On-demand DB admin task (create databases/roles, import dumps) run from inside
 // the VPC. Defines a runnable task only — trigger it with scripts/db/run-sql.sh.
