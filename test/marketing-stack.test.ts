@@ -385,3 +385,32 @@ describe('DbAdminStack — marketing migrations task', () => {
     template.hasOutput('MarketingMigrateTaskDefArn', {});
   });
 });
+
+// laguna posts order/reservation events to the agent's /backend/* endpoints, by Cloud
+// Map name, inside the VPC. The agent's task SG takes no inbound traffic otherwise, so
+// without this rule the events time out and expire after 72 hours.
+describe('MarketingStack — laguna events into the agent', () => {
+  test('opens the agent (8080) to laguna only', () => {
+    const { template } = synthMarketing();
+    const rules = Object.values(
+      template.findResources('AWS::EC2::SecurityGroupIngress'),
+    ) as any[];
+    const toAgent = rules.filter((r) => r.Properties.FromPort === 8080);
+    assert.equal(toAgent.length, 1, 'exactly one 8080 ingress rule');
+    assert.equal(toAgent[0].Properties.IpProtocol, 'tcp');
+    assert.ok(toAgent[0].Properties.SourceSecurityGroupId, 'source must be laguna\'s SG');
+    assert.equal(toAgent[0].Properties.CidrIp, undefined);
+    // Standalone, not inline on the SG: console's own 8080 rule is a standalone resource
+    // and an inline set on the same SG would strip it on the next update.
+    const sgs = Object.values(template.findResources('AWS::EC2::SecurityGroup')) as any[];
+    for (const sg of sgs) assert.equal(sg.Properties.SecurityGroupIngress, undefined);
+  });
+
+  test('lagunaMarketingEvents=off drops the rule', () => {
+    const { template } = synthMarketing({ lagunaMarketingEvents: 'off' });
+    const rules = Object.values(
+      template.findResources('AWS::EC2::SecurityGroupIngress'),
+    ) as any[];
+    assert.ok(!rules.some((r) => r.Properties.FromPort === 8080));
+  });
+});

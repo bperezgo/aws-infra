@@ -125,3 +125,28 @@ describe('CiStack — laguna release role pushes the web image', () => {
     assert.match(policies, /LagunaWebRepo/);
   });
 });
+
+// The backend monorepo splits its releases by tag prefix: `cloud/v*` builds the two cloud
+// images (release-cloud.yml), `edge/v*` and `landing/v*` never touch AWS. Only cloud tags
+// may assume the push role; a bare `v*` pattern rejects them (`v*` doesn't match `cloud/...`).
+describe('CiStack — laguna release role trusts cloud/v* tags only', () => {
+  const { template } = synthCi();
+
+  test('the laguna push role trusts refs/tags/cloud/v* of the backend repo', () => {
+    template.hasResourceProperties('AWS::IAM::Role', {
+      RoleName: 'gha-laguna-ecr-push',
+      AssumeRolePolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Condition: Match.objectLike({
+              StringLike: {
+                'token.actions.githubusercontent.com:sub':
+                  'repo:test-owner/laguna-escondida-backend:ref:refs/tags/cloud/v*',
+              },
+            }),
+          }),
+        ]),
+      },
+    });
+  });
+});

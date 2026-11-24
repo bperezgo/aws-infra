@@ -410,3 +410,45 @@ describe('ServicesStack — customer MCP sidecar', () => {
     assert.ok(!containers(off).some((c) => c.Name === 'mcp-customer'));
   });
 });
+
+// v1.2.x adds three things the cloud reads from its environment. The two keys seal
+// what the backend stores (integration credentials, notification channel secrets):
+// unset, the feature is off and the UI says "las integraciones no están habilitadas".
+// The events URL is where laguna POSTs order/reservation events for marketing-app's
+// agent; unset, nothing is recorded or sent.
+describe('ServicesStack — integrations, notifications and marketing events', () => {
+  const { template } = synthServices();
+
+  const app = (t = template) =>
+    (Object.values(t.findResources('AWS::ECS::TaskDefinition'))[0] as any).Properties
+      .ContainerDefinitions.find((c: any) => c.Name === 'app');
+  const envOf = (t = template): Record<string, unknown> =>
+    Object.fromEntries(app(t).Environment.map((e: any) => [e.Name, e.Value]));
+  const secretNames = (t = template): string[] => app(t).Secrets.map((s: any) => s.Name);
+  const literal = (v: unknown): string =>
+    typeof v === 'string'
+      ? v
+      : JSON.stringify(v).replace(/\{"Fn::ImportValue":"[^"]*"\}/g, '<token>');
+
+  test('both sealing keys are secrets, never plaintext env', () => {
+    for (const name of ['INTEGRATION_SECRETS_KEY', 'NOTIFICATION_SECRETS_KEY']) {
+      assert.ok(secretNames().includes(name), `${name} should be injected as a secret`);
+      assert.ok(!(name in envOf()), `${name} must not be plaintext env`);
+    }
+  });
+
+  test('events go to whatsapp-agent over its Cloud Map name, base URL only', () => {
+    // The backend appends /backend/events itself; a trailing path or slash would double it.
+    assert.match(literal(envOf().MARKETING_APP_EVENTS_URL), /^http:\/\/whatsapp-agent\.[^/:]+(\.[^/:]+)*:8080$/);
+  });
+
+  test('no per-organization events secret in env: it is the marketing_app integration now', () => {
+    assert.ok(!Object.keys(envOf()).some((n) => n.startsWith('MARKETING_APP_EVENTS_SECRET_')));
+    assert.ok(!secretNames().some((n) => n.startsWith('MARKETING_APP_EVENTS_SECRET_')));
+  });
+
+  test('lagunaMarketingEvents=off drops the events URL', () => {
+    const { template: off } = synthServices({ lagunaMarketingEvents: 'off' });
+    assert.ok(!('MARKETING_APP_EVENTS_URL' in envOf(off)));
+  });
+});

@@ -125,6 +125,9 @@ export class ServicesStack extends cdk.Stack {
     // deployment.environment for telemetry resource attrs. Read from cdk.json
     // context (`env`), the same value bin/app.ts validates; defaults to 'dev' so
     // the offline test harness (which sets no context) still synths.
+    // Off drops the events URL here and the agent's 8080 ingress in MarketingStack.
+    const marketingEventsEnabled = this.node.tryGetContext('lagunaMarketingEvents') !== 'off';
+
     const deployEnv = String(this.node.tryGetContext('env') ?? 'dev');
 
     // App-level config (invoice provider, JWT, admin key, object-storage creds,
@@ -219,6 +222,15 @@ export class ServicesStack extends cdk.Stack {
         // each caller; setting it is a boot error), and NODE_ID must be set. It keeps the
         // id Laguna's box derives for the cloud, or the box's sync_state goes stale.
         NODE_ID: LAGUNA_CLOUD_NODE_ID,
+        // Where laguna POSTs order/reservation events for marketing-app's agent (it
+        // serves /backend/events and /backend/notifications; the backend appends the
+        // path). Inside the VPC by Cloud Map name: MarketingStack opens the agent's 8080
+        // to laguna. Not a secret. Each organization's signing secret is its
+        // marketing_app integration, sealed under INTEGRATION_SECRETS_KEY, so no
+        // MARKETING_APP_EVENTS_SECRET_* env. Unset, nothing is recorded or sent.
+        ...(marketingEventsEnabled
+          ? { MARKETING_APP_EVENTS_URL: `http://whatsapp-agent.${namespace.namespaceName}:8080` }
+          : {}),
       },
       secrets: {
         // DB creds are the app-scoped role `laguna_app` (created by
@@ -238,6 +250,12 @@ export class ServicesStack extends cdk.Stack {
         STORAGE_REGION: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'STORAGE_REGION'),
         CDN_URL: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'CDN_URL'),
         NODE_SYNC_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NODE_SYNC_KEY'),
+        // AES-256 keys (base64, 32 bytes: `openssl rand -base64 32`) that seal what the
+        // backend stores: organizations' provider credentials and notification channel
+        // secrets. Unset, those features are off. Losing or rotating one makes the data
+        // sealed under it unreadable: back them up. Both MUST exist in the app secret.
+        INTEGRATION_SECRETS_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'INTEGRATION_SECRETS_KEY'),
+        NOTIFICATION_SECRETS_KEY: ecs.Secret.fromSecretsManager(lagunaAppSecret, 'NOTIFICATION_SECRETS_KEY'),
         // Raw PEM — entire secret value, no JSON field.
         CDN_PRIVATE_KEY: ecs.Secret.fromSecretsManager(lagunaCfSecret),
       },

@@ -256,6 +256,25 @@ export class MarketingStack extends cdk.Stack {
       'whatsapp-agent to postgres',
     );
 
+    // laguna's events (orders, reservations, delivery) arrive at the agent's own port,
+    // by Cloud Map name. The agent's SG takes no other inbound traffic. Added on a
+    // re-imported handle so it is a STANDALONE rule, never inline on the SG: ConsoleStack
+    // adds its own 8080 rule to this SG as a standalone resource, and CloudFormation
+    // treats inline rules as authoritative, so an inline one would strip console's.
+    if (ctx('lagunaMarketingEvents') !== 'off') {
+      const agentSgLocal = ec2.SecurityGroup.fromSecurityGroupId(
+        this,
+        'AgentSgImport',
+        agent.securityGroup.securityGroupId,
+        { allowAllOutbound: false, mutable: true },
+      );
+      agentSgLocal.addIngressRule(
+        ec2.Peer.securityGroupId(lagunaSecurityGroup.securityGroupId),
+        ec2.Port.tcp(8080),
+        'laguna to whatsapp-agent backend events',
+      );
+    }
+
     if (ordersEnabled) {
       // Re-imported so the rule lands in this (consuming) stack, like the DB rule.
       const lagunaSgLocal = ec2.SecurityGroup.fromSecurityGroupId(

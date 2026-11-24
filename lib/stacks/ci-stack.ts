@@ -16,9 +16,9 @@ export interface CiStackProps extends cdk.StackProps {
 /**
  * GitHub Actions → AWS via OIDC. No long-lived access keys.
  *
- * Each backend repo gets a dedicated push role scoped to its ECR repo and
- * to release tag refs only (`refs/tags/v*`). Merges to main do NOT assume
- * the role — only `release: published` workflows do.
+ * Each backend repo gets a dedicated push role scoped to its ECR repos and
+ * to its release tag refs only (`refs/tags/<tagPattern>`). Merges to main and
+ * PRs do NOT assume the role — only release-tag workflows do.
  *
  * NOTE: account can only have ONE OIDC provider for token.actions.githubusercontent.com.
  * If you already have one (from another stack/Terraform), delete the
@@ -45,6 +45,10 @@ export class CiStack extends cdk.Stack {
       provider,
       githubOwner,
       githubRepo: 'laguna-escondida-backend',
+      // The monorepo splits releases by tag prefix: `cloud/v*` (release-cloud.yml) builds
+      // both cloud images; `edge/v*` and `landing/v*` never touch AWS. The image tag is the
+      // version without the prefix (cloud/v1.3.0 -> v1.3.0).
+      tagPattern: 'cloud/v*',
       repositoryArns: [ecr.laguna.repositoryArn, ecr.lagunaWeb.repositoryArn],
     });
 
@@ -65,6 +69,7 @@ export class CiStack extends cdk.Stack {
       // carry `repo:<owner>@<ownerId>/<repo>@<repoId>:...`. IDs from
       // `gh api repos/bperezgo/marketing-app/actions/oidc/customization/sub`.
       immutableSubject: { ownerId: '42921391', repoId: '1377597523' },
+      tagPattern: 'v*',
       repositoryArns: [
         ecr.whatsappAgent.repositoryArn,
         ecr.marketingMigrations.repositoryArn,
@@ -84,10 +89,12 @@ export class CiStack extends cdk.Stack {
     provider: iam.IOpenIdConnectProvider;
     githubOwner: string;
     githubRepo: string;
+    /** Release tag glob (StringLike) allowed to assume the role, e.g. `v*` or `cloud/v*`. */
+    tagPattern: string;
     repositoryArns: string[];
     immutableSubject?: { ownerId: string; repoId: string };
   }): iam.Role {
-    const { id, roleName, provider, githubOwner, githubRepo, repositoryArns, immutableSubject } = params;
+    const { id, roleName, provider, githubOwner, githubRepo, tagPattern, repositoryArns, immutableSubject } = params;
 
     const subjectRepo = immutableSubject
       ? `${githubOwner}@${immutableSubject.ownerId}/${githubRepo}@${immutableSubject.repoId}`
@@ -104,7 +111,7 @@ export class CiStack extends cdk.Stack {
           },
           // Only tag pushes (releases) can assume — not branches, not PRs.
           StringLike: {
-            'token.actions.githubusercontent.com:sub': `repo:${subjectRepo}:ref:refs/tags/v*`,
+            'token.actions.githubusercontent.com:sub': `repo:${subjectRepo}:ref:refs/tags/${tagPattern}`,
           },
         },
         'sts:AssumeRoleWithWebIdentity',
